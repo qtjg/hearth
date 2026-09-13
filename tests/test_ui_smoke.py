@@ -179,17 +179,26 @@ def test_glow_attaches_and_fade_settles(qapp):
     # a widget with its own effect keeps it — the fade politely skips
     fade_in(halo, ms=60)
     assert halo.graphicsEffect() is effect
-    # a plain widget fades and settles at full opacity (effect stays
-    # attached by design — persistent animation, no teardown races)
+    # a plain widget fades in: effect attached, ramp starts at zero
     plain = QLabel("fade me")
     fade_in(plain, ms=60)
-    _pump(qapp, 300)
     settled = plain.graphicsEffect()
     assert isinstance(settled, QGraphicsOpacityEffect)
+    # deterministic finish: jump the animation clock to its end — no
+    # wall-clock dependence (slow CI runners made a timed pump flaky)
+    ramp = settled._hearth_ramp
+    ramp.setCurrentTime(ramp.totalDuration())
     assert settled.opacity() == pytest.approx(1.0)
     fade_in(plain, ms=60)   # restart on a settled widget is always safe
-    _pump(qapp, 300)
+    ramp = plain.graphicsEffect()._hearth_ramp
+    ramp.setCurrentTime(ramp.totalDuration())
     assert plain.graphicsEffect().opacity() == pytest.approx(1.0)
+    # and the ramp genuinely animates: a short real-time stretch moves it
+    # strictly past the start value (loose bound — CI clocks are rough)
+    fade_in(plain, ms=60)
+    _pump(qapp, 120)
+    moving = plain.graphicsEffect().opacity()
+    assert 0.0 < moving <= 1.0
 
 
 def test_cover_tile_frames_art_and_announces(qapp):
