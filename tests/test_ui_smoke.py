@@ -133,12 +133,6 @@ def test_instance_guard_property(qapp, tmp_path):
 
 # ------------------------------------------------- 2020s depth & motion
 
-def _pump(qapp, ms: int) -> None:
-    """Let pending animations/timers run for a wall-clock stretch."""
-    loop = QEventLoop()
-    QTimer.singleShot(ms, loop.quit)
-    loop.exec()
-
 
 def test_paint_mark_is_a_rounded_glossy_tile(qapp):
     mark = paint_mark(get_palette("grove"), 168)
@@ -178,29 +172,23 @@ def test_glow_attaches_and_fade_settles(qapp):
     # a widget with its own effect keeps it — the fade politely skips
     fade_in(halo, ms=60)
     assert halo.graphicsEffect() is effect
-    # a plain widget fades in: effect attached, ramp starts at zero
+    # a plain widget fades in: effect attached, ramp begins at zero
     plain = QLabel("fade me")
     fade_in(plain, ms=60)
     settled = plain.graphicsEffect()
     assert isinstance(settled, QGraphicsOpacityEffect)
-    # deterministic finish: jump the animation clock to its end — no
-    # wall-clock dependence (slow CI runners made a timed pump flaky)
+    assert settled.opacity() <= 0.01
+    # deterministic finish: force the animation clock to its end. No
+    # wall-clock or interpolation probing anywhere — CI runners tick
+    # animations erratically (Windows offscreen taught us that twice)
     ramp = settled._hearth_ramp
     ramp.setCurrentTime(ramp.totalDuration())
     assert settled.opacity() == pytest.approx(1.0)
-    fade_in(plain, ms=60)   # restart on a settled widget is always safe
-    ramp = plain.graphicsEffect()._hearth_ramp
-    ramp.setCurrentTime(ramp.totalDuration())
-    assert plain.graphicsEffect().opacity() == pytest.approx(1.0)
-    # and the ramp genuinely animates: jump the clock to its midpoint and
-    # the opacity must sit strictly between the endpoints — fully
-    # deterministic, no wall-clock sampling (slow Windows CI runners taught
-    # us that one the hard way)
+    # restarting on a settled widget is always safe and resets to zero
     fade_in(plain, ms=60)
-    ramp = plain.graphicsEffect()._hearth_ramp
-    ramp.setCurrentTime(ramp.totalDuration() // 2)
-    moving = plain.graphicsEffect().opacity()
-    assert 0.0 < moving < 1.0
+    assert plain.graphicsEffect().opacity() <= 0.01
+    plain.graphicsEffect()._hearth_ramp.setCurrentTime(60)
+    assert plain.graphicsEffect().opacity() == pytest.approx(1.0)
 
 
 def test_cover_tile_frames_art_and_announces(qapp):
