@@ -16,6 +16,7 @@ from hearth.share import (
     encode_playlists,
 )
 from hearth.window import MainWindow, NowView
+from hearth.lyrics import LrcLine
 
 from .test_app_smoke import make_hearth
 from .test_models import make_track
@@ -200,19 +201,48 @@ def test_now_view_track_and_lyrics_state(qapp):
     assert view._artist.text() == "Now Artist"
 
     view.set_lyrics("different-id", "stale lyrics")
-    assert view._lyrics.toPlainText() == ""          # stale payload ignored
+    assert view._lyrics._plain.toPlainText() == ""   # stale payload ignored
 
     view.set_lyrics_loading()
-    assert view._lyrics.toPlainText() == "Loading lyrics…"
+    assert view._lyrics._plain.toPlainText() == "Loading lyrics…"
 
     view.set_lyrics("nv1", None)
-    assert "No lyrics" in view._lyrics.toPlainText()
+    assert "No lyrics" in view._lyrics._plain.toPlainText()
 
     view.set_lyrics("nv1", "la la")
-    assert view._lyrics.toPlainText() == "la la"
+    assert view._lyrics._plain.toPlainText() == "la la"
 
     view.set_track(None)
-    assert view._lyrics.toPlainText() == ""
+    assert view._lyrics._plain.toPlainText() == ""
+
+
+def test_now_view_synced_lyrics_take_the_stage(qapp):
+    view = NowView(get_palette("grove"))
+    track = make_track(video_id="syn1", title="Sync Song", artist="Sync Artist")
+    view.set_track(track)
+
+    view.set_lyrics("syn1", None, [])                  # empty lines → plain fallback
+    assert "No lyrics" in view._lyrics._plain.toPlainText()
+
+    lines = [LrcLine(0, "first"), LrcLine(2_000, "second")]
+    view.set_lyrics("syn1", "plain words", lines)
+    assert view._lyrics._pages.currentWidget() is view._lyrics._sheet
+    assert view._lyrics._sheet.count() == 2
+
+    view.set_position(2_100)                           # second line lights up
+    assert view._lyrics._active == 1
+    view.set_position(2_900)                           # same line, no churn
+    assert view._lyrics._active == 1
+    view.set_position(4_500)                           # past the end keeps last line
+    assert view._lyrics._active == 1
+
+    seen: list[int] = []
+    view.lyrics_seek_requested.connect(seen.append)
+    view._lyrics._on_clicked(view._lyrics._sheet.item(0))
+    assert seen == [0]
+
+    view.set_track(None)
+    assert view._lyrics._plain.toPlainText() == ""
 
 
 def test_now_view_pin_signal(qapp):
@@ -379,11 +409,14 @@ def test_queue_reorder_roundtrip(tmp_path, qapp):
 def test_lyrics_flow_writes_into_now_view(tmp_path, qapp):
     hearth = make_hearth(tmp_path)
     track = make_track(video_id="lyr1", title="Lyric Song")
-    hearth._on_lyrics_ready((track.video_id, "words go here"))
+    hearth._on_lyrics_ready((track.video_id, "words go here", None))
     hearth.window.now_view.set_track(track)
-    hearth._on_lyrics_ready((track.video_id, "words go here"))
-    assert hearth.window.now_view._lyrics.toPlainText() == "words go here"
-    assert hearth._lyrics_cache["lyr1"] == "words go here"
+    hearth._on_lyrics_ready((track.video_id, "words go here", None))
+    assert hearth.window.now_view._lyrics._plain.toPlainText() == "words go here"
+    assert hearth._lyrics_cache["lyr1"] == ("words go here", None)
+    hearth._on_lyrics_ready((track.video_id, None, [LrcLine(0, "hi")]))
+    assert hearth.window.now_view._lyrics._pages.currentWidget() is \
+        hearth.window.now_view._lyrics._sheet
     hearth.shutdown()
 
 

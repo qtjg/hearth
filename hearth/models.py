@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 
 
 @dataclass
@@ -13,6 +13,7 @@ class Album:
     browse_id: str
     title: str
     artist: str = ""
+    artist_id: str = ""        # channel id (UC…) when the catalogue knows it
     year: str = ""
     thumbnail: str = ""
 
@@ -46,6 +47,7 @@ class Track:
     duration_sec: int = 0
     thumbnail: str = ""
     playlist_id: str = ""
+    artist_id: str = ""        # channel id (UC…) when the catalogue knows it
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -65,6 +67,37 @@ class Track:
     @property
     def display_name(self) -> str:
         return f"{self.artist} — {self.title}" if self.artist else self.title
+
+
+@dataclass
+class Artist:
+    """An artist page: identity, top tracks, releases, and similar acts."""
+
+    channel_id: str
+    name: str
+    description: str = ""
+    subscribers: str = ""
+    thumbnail: str = ""
+    top_tracks: list[Track] = field(default_factory=list)
+    albums: list[Album] = field(default_factory=list)
+    singles: list[Album] = field(default_factory=list)
+    related: list["Artist"] = field(default_factory=list)   # shallow: id + name only
+
+    @property
+    def display_name(self) -> str:
+        return self.name
+
+    @property
+    def meta_line(self) -> str:
+        """The dim subtitle under the artist name (subscribers, description)."""
+        bits: list[str] = []
+        if self.subscribers:
+            bits.append(self.subscribers)
+        if self.description:
+            first = self.description.strip().splitlines()[0] if self.description.strip() else ""
+            if first:
+                bits.append(first)
+        return "  ·  ".join(bits)
 
 
 def format_duration(seconds: int | float | None) -> str:

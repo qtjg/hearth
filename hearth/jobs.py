@@ -190,18 +190,85 @@ class LoadJob(QRunnable):
 
 
 class LyricsJob(QRunnable):
-    """Fetches lyrics for the current track off the main thread."""
+    """Fetches lyrics for the current track off the main thread.
 
-    def __init__(self, catalog: Catalog, video_id: str):
+    Synced (LRC) first via LRCLIB — every line gets its moment — then
+    plain text from LRCLIB, and the YT Music catalogue as the last leg.
+    Emits ``(video_id, plain_text, lines)`` where `lines` is a parsed
+    LRC timeline or None when only plain text was found.
+    """
+
+    def __init__(self, catalog: Catalog, track: Track):
         super().__init__()
         self.setAutoDelete(False)
         self.signals = _SignalCarrier()
         self.catalog = catalog
-        self.video_id = video_id
+        self.track = track
 
     def run(self) -> None:  # noqa: D102
-        text = self.catalog.lyrics(self.video_id)
-        self.signals.emit_safe(self.signals.finished, (self.video_id, text))
+        from . import lyrics as lyrics_engine
+
+        plain: str | None = None
+        lines = None
+        try:
+            plain_lrclib, lrc = lyrics_engine.fetch_lyrics(
+                self.track.artist,
+                self.track.title,
+                duration_sec=self.track.duration_sec or None,
+            )
+            if lrc:
+                parsed = lyrics_engine.parse_lrc(lrc)
+                if parsed:
+                    lines = parsed
+            plain = plain_lrclib
+        except Exception as exc:  # noqa: BLE001 - lyrics must never break playback
+            log.info("synced lyrics fetch failed for %s: %s", self.track.video_id, exc)
+        if plain is None and lines is None:
+            plain = self.catalog.lyrics(self.track.video_id)
+        self.signals.emit_safe(
+            self.signals.finished, (self.track.video_id, plain, lines)
+        )
+
+
+class ArtistJob(QRunnable):
+    """Opens an artist page; emits an Artist (or failed(channel_id))."""
+
+    def __init__(self, catalog: Catalog, channel_id: str):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.catalog = catalog
+        self.channel_id = channel_id
+
+    def run(self) -> None:  # noqa: D102
+        artist = self.catalog.artist(self.channel_id)
+        if artist is not None:
+            self.signals.emit_safe(self.signals.finished, artist)
+        else:
+            self.signals.emit_safe(self.signals.failed, self.channel_id)
+
+
+class ArtistLookupJob(QRunnable):
+    """Finds an artist by name when no channel id is known; emits list[Artist].
+
+    The yt-dlp web leg and some catalogue results carry a name but no
+    UC… id — this is the door-opener for those.
+    """
+
+    def __init__(self, catalog: Catalog, name: str, limit: int = 5):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.catalog = catalog
+        self.name = name
+        self.limit = limit
+
+    def run(self) -> None:  # noqa: D102
+        artists = self.catalog.search_artists(self.name, limit=self.limit)
+        if artists:
+            self.signals.emit_safe(self.signals.finished, artists)
+        else:
+            self.signals.emit_safe(self.signals.failed, self.name)
 
 
 class RadioJob(QRunnable):

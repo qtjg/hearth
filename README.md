@@ -1,12 +1,14 @@
 <div align="center">
 
+<img src="docs/assets/banner.png" width="100%" alt="Hearth banner art — a cozy 3D fireplace with equalizer flames, floating music notes and a vinyl record"/>
+
 <img src="docs/assets/hero-3d.svg" width="100%" alt="Hearth — a cozy three-pane desktop player for YouTube Music"/>
 
-<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+live+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
+<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+synced+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-201%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.6.0-ff7a18?style=flat-square)
+![tests](https://img.shields.io/badge/tests-245%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.6.1-ff7a18?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-8b949e?style=flat-square)
@@ -80,6 +82,29 @@ GitHub theme:
 </picture>
 
 ---
+
+## 🎤 Spotlight — Artist Pages & Words That Keep the Beat (v0.6.1)
+
+Two long-requested upgrades land together: every artist gets a stage, and
+every lyric line gets its moment.
+
+- **🎤 Artist pages** — right-click any track → *🎤 Artist page* (it works
+  from album pages and related-artist chips too): a real artist stage with
+  the face, the story and subscriber count, **top tracks** ready to play or
+  shuffle, every **album and single** as cover cards that open the full
+  album page, and a **Fans also like** rail for hopping between kindred
+  acts. No channel id on a rare track? Hearth finds the artist by name and
+  opens the stage anyway.
+- **✨ Synced lyrics** — hearth now asks LRCLIB (free, keyless, no account)
+  for time-cued LRC: the current line **glows in the palette accent** and
+  stays centered while the song moves, and **clicking any line seeks
+  straight to that moment** — instant karaoke. When no timed lyrics exist
+  it degrades in steps: LRCLIB plain text → the YT Music catalogue → the
+  cozy “no lyrics” note. Everything is cached per track, fetched off the
+  main thread, and never allowed to break playback.
+- **🖼️ Banner art** — the README now opens on a cinematic 3D cover: the
+  fireplace, equalizer flames, floating notes and a vinyl — hearth's whole
+  personality in one image.
 
 ## 🖼️ The Big Window (v0.3)
 
@@ -204,7 +229,8 @@ as close to impossible as a player can get.
 | 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
 | 🌍 **Discover the world** | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
 | 🗺️ **World Explorer** | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
-| 📝 **Lyrics** | Now Playing page with auto-loaded lyrics, cache, and no-lyrics fallback |
+| 🎤 **Artist pages** | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
+| ✨ **Synced lyrics** | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
 | 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, autoplay, favorites, playlists, and history persist |
@@ -298,7 +324,8 @@ hearth/
 │   ├── cover.py        → cover tiles: painted flame fallback + async album art
 │   ├── hotkeys.py      → conflict detection & override merging
 │   ├── jobs.py         → QRunnable search/load workers on isolated pools
-│   ├── models.py       → Track dataclass & serialization
+│   ├── lyrics.py       → LRC parser, sync engine & LRCLIB client (keyless)
+│   ├── models.py       → Track / Album / Artist dataclasses & serialization
 │   ├── panel.py        → the floating ribbon (legacy companion UI)
 │   ├── player.py       → queue engine (pure) + lazy Qt Multimedia backend
 │   ├── share.py        → playlist JSON encode/decode for portable exports
@@ -311,8 +338,8 @@ hearth/
 │   ├── world.py        → the 74-genre World Explorer universe (pure data)
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
-├── docs/assets/        → animated 3D SVG artwork used by this README
-├── tests/              → 201 headless tests (offscreen Qt platform)
+├── docs/assets/        → animated 3D SVG artwork + banner art used by this README
+├── tests/              → 245 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -323,12 +350,13 @@ hearth/
 
 ## 🧪 Testing
 
-201 tests cover models, palettes, playlists, share codecs, storage, retry
+245 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
-caching, hotkey conflicts, the genre universe (every dial described, seed
-rotation), search-everywhere fallback ladders, the main window (views,
-player bar, queue dock with drag & drop, pin flow), and the real app
-booting headless:
+caching, LRC parsing, the LRCLIB fallback ladder, artist-page mapping
+(catalogue, jobs, view, app drill-down), hotkey conflicts, the genre
+universe (every dial described, seed rotation), search-everywhere fallback
+ladders, the main window (views, player bar, queue dock with drag & drop,
+pin flow), and the real app booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -342,9 +370,17 @@ not just claimed.
 
 ## 🗺️ Roadmap
 
-- 🎨 Artist pages (Discover serves the shelves; artist drill-down is next)
-- 📦 AUR package publication
-- 🕓 Synced (time-cued) lyrics
+The living plan — waves, acceptance criteria, and the wish pool — lives in
+**[ROADMAP.md](ROADMAP.md)**. Artist pages and synced lyrics just shipped in
+v0.6.1; the headline of what burns next:
+
+- 🔥 **v0.7.0 — Memory & Rituals**: listen history shelves, "On Repeat"
+  smart playlist, the Glow Mix, queue persistence, Discord Rich Presence
+- 🎭 **v0.8.0 — The Wider Stage**: desktop lyrics overlay, theater mode,
+  palette packs + theme editor, per-track speed memory
+- 📦 **v0.9.0 — Reach**: AUR / winget / brew, update whisper, diagnostics
+- 🎪 **v1.0.0 — The Festival**: gapless playback, native backend probe,
+  plugin hooks, multi-language UI
 
 ---
 

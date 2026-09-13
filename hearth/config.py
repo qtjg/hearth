@@ -73,6 +73,14 @@ DISCOVER_PLAYLIST_LIMIT = 300   # max tracks pulled per curated playlist page
 DISCOVER_CARD_SIZE = 150        # square thumbnail size of discover shelf cards
 WORLD_STATION_LIMIT = 20        # tracks fetched per world-genre station tune-in
 
+# --- v0.6.1: artist spotlight + synced lyrics ---
+LRCLIB_URL = "https://lrclib.net/api"   # free, keyless lyrics database
+LRCLIB_TIMEOUT = 10                      # seconds per lyrics request
+ARTIST_AVATAR = 132                      # artist page avatar size
+ARTIST_CARD_SIZE = 132                   # release card size on the artist page
+
+VERSION = "0.6.1"
+
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"
 REPEAT_ONE = "one"

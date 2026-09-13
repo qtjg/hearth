@@ -12,7 +12,7 @@ import json
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QKeySequence, QShortcut
+from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -30,6 +30,7 @@ from PyQt6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSlider,
+    QStackedLayout,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -39,7 +40,8 @@ from PyQt6.QtWidgets import (
 from . import config, share, world
 from .config import Palette, get_palette
 from .cover import CoverTile
-from .models import Album, Track
+from .lyrics import LrcLine, SyncedLyrics
+from .models import Album, Artist, Track
 from .storage import HearthStore
 from .theme import build_stylesheet
 from .utils import clock
@@ -225,6 +227,11 @@ class TrackListView(QWidget):
 
     def set_header(self, title: str) -> None:
         self._head.setText(title)
+
+    def set_visible_rows(self, rows: int) -> None:
+        """Cap the list to `rows` visible rows (embeds inside scroll pages)."""
+        rows = max(1, min(int(rows), 12))
+        self._list.setFixedHeight(rows * (config.ROW_HEIGHT + 8) + 14)
 
     def set_tracks(self, tracks: list[Track]) -> None:
         self._tracks = list(tracks)
@@ -793,13 +800,314 @@ class AlbumView(TrackListView):
         self.layout().insertLayout(2, actions)
 
 
+class ArtistView(QWidget):
+    """One artist's stage: face, story, top tracks, releases, kindred acts."""
+
+    play_all_requested = pyqtSignal(list, int)
+    shuffle_requested_sig = pyqtSignal(list)
+    track_activated = pyqtSignal(object, list)     # Track, context — top tracks
+    album_opened = pyqtSignal(object)      # Album — drill into a release
+    artist_opened = pyqtSignal(object)     # Artist — a related act's page
+    menu_requested = pyqtSignal(object, object)   # Track, QMenu (top tracks)
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._artist: Artist | None = None
+
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(24, 18, 24, 12)
+        lay.setSpacing(10)
+
+        # --- face + identity ---
+        head = QHBoxLayout()
+        head.setSpacing(16)
+        self._avatar = CoverTile(palette, config.ARTIST_AVATAR)
+        ident = QVBoxLayout()
+        ident.setSpacing(4)
+        self._name = QLabel("Artist")
+        self._name.setProperty("hero", True)
+        self._name.setWordWrap(True)
+        self._meta = QLabel("")
+        self._meta.setProperty("dim", True)
+        self._meta.setWordWrap(True)
+        ident.addWidget(self._name)
+        ident.addWidget(self._meta)
+        ident.addStretch(1)
+        head.addWidget(self._avatar)
+        head.addLayout(ident, 1)
+        lay.addLayout(head)
+
+        # --- actions ---
+        actions = QHBoxLayout()
+        play = QPushButton("▶ Play top tracks")
+        play.setProperty("accent", True)
+        play.clicked.connect(
+            lambda: self.play_all_requested.emit(list(self._top_tracks()), 0)
+        )
+        shuffle = QPushButton("🔀 Shuffle")
+        shuffle.clicked.connect(
+            lambda: self.shuffle_requested_sig.emit(list(self._top_tracks()))
+        )
+        for b in (play, shuffle):
+            actions.addWidget(b)
+        actions.addStretch(1)
+        lay.addLayout(actions)
+
+        # --- top tracks (embedded list, capped height) ---
+        self._top = TrackListView(palette)
+        self._top.set_header("Top tracks")
+        self._top.track_activated.connect(self.track_activated.emit)
+        self._top.menu_requested.connect(self.menu_requested.emit)
+        lay.addWidget(self._top)
+
+        # --- albums & singles ---
+        self._albums_cap = QLabel("Albums")
+        self._albums_cap.setProperty("shelf", True)
+        self._albums_grid = QGridLayout()
+        self._albums_grid.setSpacing(10)
+        lay.addWidget(self._albums_cap)
+        lay.addLayout(self._albums_grid)
+        self._singles_cap = QLabel("Singles")
+        self._singles_cap.setProperty("shelf", True)
+        self._singles_grid = QGridLayout()
+        self._singles_grid.setSpacing(10)
+        lay.addWidget(self._singles_cap)
+        lay.addLayout(self._singles_grid)
+
+        # --- related artists ---
+        self._related_cap = QLabel("Fans also like")
+        self._related_cap.setProperty("shelf", True)
+        self._related_row = QHBoxLayout()
+        self._related_row.setSpacing(6)
+        lay.addWidget(self._related_cap)
+        lay.addLayout(self._related_row)
+        lay.addStretch(1)
+
+        area.setWidget(page)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.addWidget(area)
+
+        self._empty_sections()
+
+    def _empty_sections(self) -> None:
+        self._albums_cap.setVisible(False)
+        self._albums_grid.setEnabled(False)
+        self._singles_cap.setVisible(False)
+        self._related_cap.setVisible(False)
+
+    def _top_tracks(self) -> list[Track]:
+        return self._top.current_tracks if hasattr(self, "_top") else []
+
+    # --- content in ---
+
+    def set_artist(self, artist: Artist) -> None:
+        self._artist = artist
+        if artist.thumbnail:
+            self._avatar.set_track_cover(artist.thumbnail)
+        else:
+            self._avatar.set_mark()
+        self._name.setText(artist.name)
+        self._meta.setText(artist.meta_line)
+        self._top.set_tracks(list(artist.top_tracks))
+        self._top.set_visible_rows(
+            len(artist.top_tracks) or 1
+        )
+        self._fill_grid(self._albums_grid, artist.albums, self._albums_cap)
+        self._fill_grid(self._singles_grid, artist.singles, self._singles_cap)
+        self._fill_related(artist.related)
+
+    def _fill_grid(self, grid: QGridLayout, albums: list[Album],
+                   caption: QLabel) -> None:
+        """One grid of release cards; the section hides itself when empty."""
+        while grid.count():
+            item = grid.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for index, album in enumerate(albums):
+            card = self._release_card(album)
+            grid.addWidget(card, index // 4, index % 4)
+        caption.setVisible(bool(albums))
+        grid.setEnabled(bool(albums))
+
+    def _release_card(self, album: Album) -> QPushButton:
+        card = QPushButton()
+        card.setProperty("card", True)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setFixedSize(config.ARTIST_CARD_SIZE, config.ARTIST_CARD_SIZE + 58)
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(10, 10, 10, 10)
+        inner.setSpacing(4)
+        tile = CoverTile(self._palette, config.ARTIST_CARD_SIZE - 20)
+        if album.thumbnail:
+            tile.set_track_cover(album.thumbnail)
+        title = QLabel(album.title)
+        title.setWordWrap(True)
+        title.setMaximumHeight(30)
+        sub = QLabel(album.year or album.artist or "")
+        sub.setProperty("dim", True)
+        inner.addWidget(tile)
+        inner.addWidget(title, 1)
+        inner.addWidget(sub)
+        card.clicked.connect(lambda _=False, a=album: self.album_opened.emit(a))
+        return card
+
+    def _fill_related(self, related: list[Artist]) -> None:
+        while self._related_row.count():
+            item = self._related_row.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        for act in related:
+            chip = QPushButton(f"🎤 {act.name}")
+            chip.setProperty("chip", True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.clicked.connect(
+                lambda _=False, a=act: self.artist_opened.emit(a)
+            )
+            self._related_row.addWidget(chip)
+        self._related_row.addStretch(1)
+        self._related_cap.setVisible(bool(related))
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self._top.apply_palette(palette)
+
+    @property
+    def current_artist(self) -> Artist | None:
+        return self._artist
+
+
 # ----------------------------------------------------------------- now playing
+
+class LyricsSheet(QWidget):
+    """The lyrics pane: plain text, or LRC lines that glow with the song.
+
+    In synced mode the active line is lit in the palette accent and kept
+    centered; clicking any line seeks the player to that moment.
+    """
+
+    line_clicked = pyqtSignal(int)   # ms — click a lyric line to seek there
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._sync: SyncedLyrics | None = None
+        self._active = -2                       # -2 = nothing highlighted yet
+
+        pages = QStackedLayout(self)
+        pages.setContentsMargins(0, 0, 0, 0)
+        self._plain = QPlainTextEdit()
+        self._plain.setProperty("lyrics", True)
+        self._plain.setReadOnly(True)
+        self._plain.setPlaceholderText(
+            "Lyrics show up here once something is playing."
+        )
+        self._sheet = QListWidget()
+        self._sheet.setProperty("lyrics", True)
+        self._sheet.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self._sheet.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._sheet.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._sheet.itemClicked.connect(self._on_clicked)
+        pages.addWidget(self._plain)
+        pages.addWidget(self._sheet)
+        self._pages = pages
+
+    # --- content in ---
+
+    def show_message(self, text: str) -> None:
+        """Plain-text state (loading notices, empty results)."""
+        self._sync = None
+        self._active = -2
+        self._pages.setCurrentWidget(self._plain)
+        self._plain.setPlainText(text)
+
+    def set_plain(self, text: str | None) -> None:
+        self._sync = None
+        self._active = -2
+        self._pages.setCurrentWidget(self._plain)
+        self._plain.setPlainText(text or "No lyrics available for this track.")
+
+    def set_synced(self, lines: list[LrcLine]) -> None:
+        if not lines:
+            self.set_plain(None)
+            return
+        self._sync = SyncedLyrics(lines)
+        self._active = -2
+        self._sheet.clear()
+        dim = QColor(self._palette.text_dim)
+        for line in self._sync.lines:
+            item = QListWidgetItem(line.text or "♪")
+            item.setTextAlignment(
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+            )
+            item.setData(Qt.ItemDataRole.UserRole, line.time_ms)
+            item.setToolTip(clock(line.time_ms))
+            item.setForeground(dim)
+            font = QFont()
+            font.setPixelSize(15)
+            item.setFont(font)
+            self._sheet.addItem(item)
+        self._pages.setCurrentWidget(self._sheet)
+
+    # --- position in / interaction out ---
+
+    def set_position(self, position_ms: int) -> None:
+        """Light the line that owns this moment (no-op in plain mode)."""
+        if self._sync is None or self._sync.empty:
+            return
+        index = self._sync.line_at(position_ms)
+        if index == self._active:
+            return
+        self._activate(index)
+
+    def _activate(self, index: int) -> None:
+        if 0 <= self._active < self._sheet.count():
+            prev = self._sheet.item(self._active)
+            font = prev.font()
+            font.setBold(False)
+            prev.setFont(font)
+            prev.setForeground(QColor(self._palette.text_dim))
+        self._active = index
+        if 0 <= index < self._sheet.count():
+            item = self._sheet.item(index)
+            font = item.font()
+            font.setBold(True)
+            font.setPixelSize(16)
+            item.setFont(font)
+            item.setForeground(QColor(self._palette.accent))
+            self._sheet.scrollToItem(
+                item, QAbstractItemView.ScrollHint.PositionAtCenter
+            )
+
+    def _on_clicked(self, item: QListWidgetItem) -> None:
+        ms = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(ms, int):
+            self.line_clicked.emit(ms)
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        if self._sync is None:
+            return
+        active_color = QColor(self._palette.accent)
+        dim = QColor(self._palette.text_dim)
+        for index in range(self._sheet.count()):
+            item = self._sheet.item(index)
+            if index == self._active:
+                item.setForeground(active_color)
+            else:
+                item.setForeground(dim)
+
 
 class NowView(QWidget):
     """The Now Playing stage: big cover, identity, and the lyrics sheet."""
 
     pin_toggled = pyqtSignal()
     radio_requested = pyqtSignal()
+    lyrics_seek_requested = pyqtSignal(int)   # ms — click a lyric line, go there
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -854,12 +1162,8 @@ class NowView(QWidget):
         right.setSpacing(6)
         cap = QLabel("LYRICS")
         cap.setProperty("dim", True)
-        self._lyrics = QPlainTextEdit()
-        self._lyrics.setProperty("lyrics", True)
-        self._lyrics.setReadOnly(True)
-        self._lyrics.setPlaceholderText(
-            "Lyrics show up here once something is playing."
-        )
+        self._lyrics = LyricsSheet(palette)
+        self._lyrics.line_clicked.connect(self.lyrics_seek_requested.emit)
         right.addWidget(cap)
         right.addWidget(self._lyrics, 1)
 
@@ -877,7 +1181,7 @@ class NowView(QWidget):
             self._artist.setText("pick something from the shelves")
             self._pin.setText("♡")
             self._cover.set_mark()
-            self._lyrics.setPlainText("")
+            self._lyrics.show_message("")
             return
         self._video_id = track.video_id
         self._title.setText(track.title)
@@ -887,14 +1191,22 @@ class NowView(QWidget):
         else:
             self._cover.set_mark()
 
-    def set_lyrics(self, video_id: str, text: str | None) -> None:
+    def set_lyrics(self, video_id: str, text: str | None,
+                   lines: list[LrcLine] | None = None) -> None:
         """Late-arriving lyrics; drop them if the track moved on meanwhile."""
         if video_id != self._video_id:
             return
-        self._lyrics.setPlainText(text or "No lyrics available for this track.")
+        if lines:
+            self._lyrics.set_synced(lines)
+        else:
+            self._lyrics.set_plain(text)
 
     def set_lyrics_loading(self) -> None:
-        self._lyrics.setPlainText("Loading lyrics…")
+        self._lyrics.show_message("Loading lyrics…")
+
+    def set_position(self, position_ms: int) -> None:
+        """Keep the glowing lyric line in step with the song."""
+        self._lyrics.set_position(position_ms)
 
     def set_pinned(self, pinned: bool) -> None:
         self._pin.setText("♥" if pinned else "♡")
@@ -902,6 +1214,7 @@ class NowView(QWidget):
     def apply_palette(self, palette: Palette) -> None:
         self._palette = palette
         self._cover.apply_palette(palette)
+        self._lyrics.apply_palette(palette)
 
     @property
     def current_track(self) -> Track | None:
@@ -1110,6 +1423,7 @@ class MainWindow(QMainWindow):
     search_submitted = pyqtSignal(str)
     search_scoped = pyqtSignal(str, str)          # query, scope
     album_opened = pyqtSignal(object)             # Album — open its page
+    artist_opened = pyqtSignal(object)            # Track | Artist | Album — artist page
     track_picked = pyqtSignal(object)             # single card pick
     playlist_picked = pyqtSignal(list, int)       # play list from index
     play_next_requested = pyqtSignal(object)      # insert at queue head
@@ -1158,11 +1472,13 @@ class MainWindow(QMainWindow):
         self.now_view = NowView(self._palette)
         self.album_view = AlbumView(self._palette)
         self.remote_playlist_view = RemotePlaylistView(self._palette)
+        self.artist_view = ArtistView(self._palette)
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.discover_view, self.world_view,
                      self.search_view, self.library_view, self.now_view,
-                     self.album_view, self.remote_playlist_view):
+                     self.album_view, self.remote_playlist_view,
+                     self.artist_view):
             self.stack.addWidget(view)
 
         self.player_bar = PlayerBar(self._palette)
@@ -1345,6 +1661,18 @@ class MainWindow(QMainWindow):
         self.now_view.radio_requested.connect(
             lambda: self.radio_requested.emit(None)
         )
+        self.now_view.lyrics_seek_requested.connect(self.seek_requested.emit)
+        av = self.artist_view
+        av.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        av.play_all_requested.connect(self.playlist_picked.emit)
+        av.shuffle_requested_sig.connect(
+            lambda tracks: self.playlist_picked.emit(list(tracks), 0)
+        )
+        av.menu_requested.connect(self._track_menu)
+        av.album_opened.connect(self.album_opened.emit)
+        av.artist_opened.connect(self.artist_opened.emit)
 
     # --- navigation ---
 
@@ -1384,6 +1712,11 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.album_view)
         for key, btn in self._nav.items():
             btn.setChecked(key == "search")   # albums arrive from Search
+
+    def open_artist(self, artist: Artist) -> None:
+        """An artist's stage: face, top tracks, releases, kindred acts."""
+        self.artist_view.set_artist(artist)
+        self.stack.setCurrentWidget(self.artist_view)
 
     def open_remote_playlist(self, title: str, tracks: list[Track]) -> None:
         """A curated Discover playlist, opened as a full page."""
@@ -1522,6 +1855,7 @@ class MainWindow(QMainWindow):
         play_next = menu.addAction("▶ Play next")
         enqueue = menu.addAction("➕ Add to queue")
         radio = menu.addAction("📻 Start radio")
+        artist_page = menu.addAction("🎤 Artist page")
         copy_link = menu.addAction("🔗 Copy YouTube link")
         menu.addSeparator()
         pinned = self.store.is_pinned(track.video_id) if self.store else False
@@ -1548,6 +1882,7 @@ class MainWindow(QMainWindow):
         play_next.triggered.connect(lambda: self.play_next_requested.emit(track))
         enqueue.triggered.connect(lambda: self.enqueue_requested.emit(track))
         radio.triggered.connect(lambda: self.radio_requested.emit(track))
+        artist_page.triggered.connect(lambda: self.artist_opened.emit(track))
         copy_link.triggered.connect(
             lambda: QApplication.clipboard().setText(
                 f"https://www.youtube.com/watch?v={track.video_id}"
@@ -1759,6 +2094,7 @@ class MainWindow(QMainWindow):
 
     def set_position(self, position_ms: int) -> None:
         self.player_bar.set_position(position_ms)
+        self.now_view.set_position(position_ms)
 
     def set_duration(self, duration_ms: int) -> None:
         self.player_bar.set_duration(duration_ms)

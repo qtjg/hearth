@@ -8,7 +8,7 @@ import time
 from typing import Callable
 
 from .config import DISCOVER_PLAYLIST_LIMIT, RETRY_ATTEMPTS, RETRY_BASE_DELAY
-from .models import Album, Collection, Track
+from .models import Album, Artist, Collection, Track
 
 log = logging.getLogger(__name__)
 
@@ -247,6 +247,83 @@ class Catalog:
                 sleep(base_delay * (2 ** attempt))
         return None
 
+    # --- artist pages: every artist gets a stage ---
+
+    def search_artists(
+        self,
+        query: str,
+        limit: int = 10,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> list[Artist]:
+        """Find artists by name (shallow pages: id + name + face). [] on failure."""
+        raw = self._retry(
+            lambda: self._get_client(client_factory).search(
+                query, filter="artists", limit=limit
+            ),
+            f"search-artists({query!r})", attempts, base_delay, sleep, default=[],
+        )
+        artists: list[Artist] = []
+        for item in raw or []:
+            channel_id = item.get("browseId") or ""
+            if not channel_id:
+                continue
+            name = item.get("artist") or ""
+            if isinstance(name, dict):
+                name = name.get("name", "")
+            artists.append(
+                Artist(
+                    channel_id=channel_id,
+                    name=str(name).strip() or "Unknown artist",
+                    thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
+                )
+            )
+        return artists
+
+    def artist(
+        self,
+        channel_id: str,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> Artist | None:
+        """Full artist page: identity, top tracks, albums, singles, related.
+        None on failure (never raises)."""
+        data = self._retry(
+            lambda: self._get_client(client_factory).get_artist(channelId=channel_id),
+            f"artist({channel_id})", attempts, base_delay, sleep,
+        )
+        data = data or {}
+        name = (data.get("name") or "").strip()
+        if not name:
+            return None
+        related: list[Artist] = []
+        for item in ((data.get("related") or {}).get("results") or []):
+            cid = item.get("browseId") or ""
+            if not cid:
+                continue
+            related.append(
+                Artist(
+                    channel_id=cid,
+                    name=item.get("title") or "Unknown artist",
+                    thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
+                )
+            )
+        return Artist(
+            channel_id=channel_id,
+            name=name,
+            description=(data.get("description") or "").strip(),
+            subscribers=str(data.get("subscribers") or ""),
+            thumbnail=(data.get("thumbnails") or [{}])[-1].get("url", ""),
+            top_tracks=self._map_results((data.get("songs") or {}).get("results") or []),
+            albums=self._map_albums((data.get("albums") or {}).get("results") or []),
+            singles=self._map_albums((data.get("singles") or {}).get("results") or []),
+            related=related,
+        )
+
     def lyrics(
         self,
         video_id: str,
@@ -415,6 +492,19 @@ class Catalog:
             return author.strip()
         return "Unknown artist"
 
+    @staticmethod
+    def _first_artist_id(item: dict) -> str:
+        """Best-effort channel id (UC…) for the primary artist of a result."""
+        listed = item.get("artists") or []
+        if isinstance(listed, list):
+            for entry in listed:
+                if isinstance(entry, dict) and entry.get("id"):
+                    return str(entry["id"])
+        owner = item.get("owner")
+        if isinstance(owner, dict) and owner.get("id"):
+            return str(owner["id"])
+        return ""
+
     @classmethod
     def _map_results(cls, results: list[dict]) -> list[Track]:
         tracks: list[Track] = []
@@ -431,6 +521,7 @@ class Catalog:
                     duration_sec=seconds,
                     thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
                     playlist_id=item.get("album", {}).get("id", "") if isinstance(item.get("album"), dict) else "",
+                    artist_id=cls._first_artist_id(item),
                 )
             )
         return tracks
@@ -447,6 +538,7 @@ class Catalog:
                     browse_id=browse_id,
                     title=item.get("title", "Unknown album"),
                     artist=cls._artist_names(item),
+                    artist_id=cls._first_artist_id(item),
                     year=item.get("year") or "",
                     thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
                 )
@@ -506,6 +598,7 @@ def web_search_tracks(query: str, limit: int = 20) -> list[Track]:
             continue
         seconds = _duration_to_sec(entry.get("duration"))
         thumbs = entry.get("thumbnails") or []
+        channel_id = str(entry.get("channel_id") or "")
         tracks.append(
             Track(
                 video_id=str(entry["id"]),
@@ -517,6 +610,7 @@ def web_search_tracks(query: str, limit: int = 20) -> list[Track]:
                     thumbs[-1].get("url", "")
                     if thumbs else entry.get("thumbnail") or ""
                 ),
+                artist_id=channel_id if channel_id.startswith("UC") else "",
             )
         )
     return tracks

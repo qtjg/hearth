@@ -16,6 +16,8 @@ from .catalog import Catalog
 from .hotkeys import effective_chords
 from .jobs import (
     AlbumJob,
+    ArtistJob,
+    ArtistLookupJob,
     DiscoverJob,
     LoadJob,
     LyricsJob,
@@ -24,7 +26,7 @@ from .jobs import (
     SearchJob,
     WorldJob,
 )
-from .models import Album, Collection, Track
+from .models import Album, Artist, Collection, Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
 from .storage import HearthStore
@@ -99,7 +101,8 @@ class Hearth:
         )
         self.store = HearthStore(self._dir / "hearth.db")
         self.catalog = Catalog()
-        self._lyrics_cache: dict[str, str | None] = {}
+        # video_id -> (plain_text | None, LrcLine list | None)
+        self._lyrics_cache: dict[str, tuple[str | None, list | None]] = {}
         # Discover caches: sections fetched once, playlists per category,
         # explore shelves reused across its three chips.
         self._discover_moods: list | None = None
@@ -167,6 +170,7 @@ class Hearth:
         w.queue_clear_requested.connect(self._clear_queue)
         w.mute_toggled.connect(self._toggle_mute)
         w.radio_requested.connect(self._start_radio)
+        w.artist_opened.connect(self._open_artist)
         w.rate_cycled.connect(self._cycle_rate)
         w.sleep_requested.connect(self._set_sleep)
         w.home_refresh_requested.connect(self._refresh_home)
@@ -292,6 +296,60 @@ class Hearth:
         album, tracks = payload
         self.window.open_album(album, tracks)
         self.surface.set_status(f"{album.title} — {len(tracks)} tracks")
+
+    def _open_artist(self, target) -> None:
+        """Artist page drill-down from a track, an album, or an artist chip."""
+        channel_id = ""
+        name = ""
+        if isinstance(target, Artist):
+            channel_id, name = target.channel_id, target.name
+        elif isinstance(target, Album):
+            channel_id, name = target.artist_id, target.artist
+        elif isinstance(target, Track):
+            channel_id, name = target.artist_id, target.artist
+        if channel_id:
+            self.surface.set_status(f"Opening {name or 'artist'}…")
+            job = ArtistJob(self.catalog, channel_id)
+            job.signals.finished.connect(self._on_artist_ready)
+            job.signals.failed.connect(
+                lambda _cid, n=name: self._open_artist_by_name(n)
+            )
+            self._launch(job)
+        elif name:
+            self._open_artist_by_name(name)
+
+    def _open_artist_by_name(self, name: str) -> None:
+        """No channel id anywhere — find the artist by name first."""
+        if not name or name == "Unknown artist":
+            self.surface.set_status("No artist to open here")
+            return
+        self.surface.set_status(f"Finding {name}…")
+        job = ArtistLookupJob(self.catalog, name)
+        job.signals.finished.connect(self._on_artist_lookup_ready)
+        job.signals.failed.connect(
+            lambda n: self.surface.set_status(f"Could not find {n}")
+        )
+        self._launch(job)
+
+    def _on_artist_lookup_ready(self, artists: list) -> None:
+        if not artists:
+            self.surface.set_status("Could not find that artist")
+            return
+        match = artists[0]
+        self.surface.set_status(f"Opening {match.name}…")
+        job = ArtistJob(self.catalog, match.channel_id)
+        job.signals.finished.connect(self._on_artist_ready)
+        job.signals.failed.connect(
+            lambda _cid: self.surface.set_status("Could not open that artist")
+        )
+        self._launch(job)
+
+    def _on_artist_ready(self, artist) -> None:
+        self.window.open_artist(artist)
+        top = len(artist.top_tracks)
+        extras = artist.albums or artist.singles
+        tail = f" · {len(extras)} releases" if extras else ""
+        self.surface.set_status(f"{artist.name} — {top} top tracks{tail}")
 
     def _show_search_results(self, tracks: list[Track]) -> None:
         self.window.show_search_results(tracks)
@@ -678,20 +736,22 @@ class Hearth:
     # --- lyrics ---
 
     def _fetch_lyrics(self, track: Track) -> None:
-        if track.video_id in self._lyrics_cache:
-            self.window.now_view.set_lyrics(track.video_id, self._lyrics_cache[track.video_id])
+        cached = self._lyrics_cache.get(track.video_id)
+        if cached is not None:
+            plain, lines = cached
+            self.window.now_view.set_lyrics(track.video_id, plain, lines)
             return
         if len(self._lyrics_cache) > 200:
             self._lyrics_cache.clear()
         self.window.now_view.set_lyrics_loading()
-        job = LyricsJob(self.catalog, track.video_id)
+        job = LyricsJob(self.catalog, track)
         job.signals.finished.connect(self._on_lyrics_ready)
         self._launch(job)
 
     def _on_lyrics_ready(self, payload) -> None:
-        video_id, text = payload
-        self._lyrics_cache[video_id] = text
-        self.window.now_view.set_lyrics(video_id, text)
+        video_id, plain, lines = payload
+        self._lyrics_cache[video_id] = (plain, lines)
+        self.window.now_view.set_lyrics(video_id, plain, lines)
 
     def _summon(self) -> None:
         if self.ui_mode == "window":
