@@ -1,16 +1,112 @@
 <div align="center">
 
-# 🔥 Hearth
+<img src="https://capsule-render.vercel.app/api?type=waving&color=0:FF6B35,50:E8491D,100:7C1D12&height=210&section=header&text=HEARTH&fontSize=76&fontColor=fff8f2&animation=fadeIn&desc=the%20desktop%20music%20player%20for%20YouTube%20Music&descSize=18&descColor=ffd9c2&descAlignY=68&descAlignX=50" width="100%" alt="Hearth banner"/>
 
-**A full three-pane desktop music player for YouTube Music — Arch Linux, Windows, and macOS.**
-
-*Sidebar navigation · Home shelves · Playlists · Bottom transport bar · Runs where you run*
-
-<br/>
+[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code:wght@500;700&size=20&pause=1100&color=FF6B35&center=true&vCenter=true&random=false&width=640&height=56&lines=Arch+%C2%B7+Windows+%C2%B7+macOS+%E2%80%94+runs+where+you+run;No+account.+No+keys.+No+telemetry.;Radio+%C2%B7+Lyrics+%C2%B7+Endless+autoplay)](https://github.com/qtjg/hearth)
 
 ![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)
-**Python 3.10+ · PyQt6 · YouTube Music · SQLite · MIT**
+![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
+![PyQt6](https://img.shields.io/badge/Qt6-PyQt6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
+![Tests](https://img.shields.io/badge/tests-155_passing-2EA043?style=for-the-badge&logo=pytest&logoColor=white)
+![Storage](https://img.shields.io/badge/storage-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Arch_%7C_Win_%7C_macOS-1793D1?style=for-the-badge&logo=archlinux&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-E8491D?style=for-the-badge)
 
+**Hearth** is a full three-pane desktop music player for YouTube Music.
+Sidebar navigation · Home shelves · Playlists · Now Playing · Bottom transport bar.
+
+</div>
+
+---
+
+## 🔥 The Stack in 3D
+
+Four layers, one campfire — drawn the way it sits in memory, widest at the
+bottom where your library lives:
+
+```text
+                      ♪
+                ╱▔▔▔▔▔▔▔▔▔▔▔▔╲
+               ╱   UI LAYER   ╲
+              ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
+             ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
+            ╱      APP CORE      ╲
+           ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
+          ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
+         ╱       NETWORK I/O        ╲
+        ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
+       ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
+      ╱         DATA · SQLITE          ╲
+     ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
+```
+
+| Layer | Modules | Role |
+|:---|:---|:---|
+| 🔲 **UI** | `window.py` · `panel.py` · `theme.py` · `cover.py` | sidebar, shelves, transport, Now Playing — all Palette-themed |
+| 🧠 **Core** | `app.py` · `player.py` · `jobs.py` · `toast.py` | lifecycle, queue engine, autoplay, hotkeys |
+| 🌐 **I/O** | `catalog.py` · `stream.py` · `tray.py` · `share.py` | YT Music guest API, yt-dlp resolver, tray, portable JSON |
+| 💾 **Data** | `storage.py` · `models.py` · `config.py` · `utils.py` | the SQLite file you own — favorites, playlists, history |
+
+---
+
+## 🧠 How It Works (The Threading Architecture)
+
+Stream resolution and catalogue search run completely asynchronously on
+**isolated thread pools**, so audio decoding never queues behind heavy work:
+
+1. **Playback Pool** — dedicated to `LoadJob`: the instant you pick a track,
+   its audio stream is resolved off the GUI thread and handed to
+   `QMediaPlayer`.
+2. **Background Pool** — `SearchJob` (YT Music guest API with exponential
+   retry backoff). Typing never stalls the window.
+
+```mermaid
+flowchart LR
+    A["🔍 Search / Paste a Link"] --> B["SearchJob<br/>background pool"]
+    B --> C["Results / Album rows"]
+    C -->|pick| D["PlaybackCore<br/>queue engine"]
+    D --> E["LoadJob<br/>playback pool"]
+    E -->|resolved URL + loudness| F["QMediaPlayer<br/>instant playback"]
+    F --> G["SQLite history"]
+    F --> H["Now-Playing view"]
+    F --> I["Toast"]
+```
+
+## 📻 The Radio Loop (Endless Autoplay)
+
+Start Radio from any track — or just let the queue run dry with autoplay on.
+The radio engine quietly refills from the YT Music watch graph, dedupes
+against everything you've heard, and the music never stops:
+
+```mermaid
+flowchart TD
+    S["🎧 seed track"] --> R["📻 Start Radio"]
+    R --> W["watch-graph fetch<br/>related tracks, retry backoff"]
+    W --> Q["queue = seed + fresh finds"]
+    Q --> P["▶ playback"]
+    P --> D{"queue dry?<br/>(repeat off)"}
+    D -- "♾️ autoplay on" --> F["auto-refill + dedupe<br/>vs history & upcoming"]
+    F --> P
+    D -- "no" --> P
+```
+
+## 🐍 The Firekeeper
+
+The snake is fed by every real commit on `main` — it patrols the contribution
+grid so the fire stays warm:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake-dark.svg" />
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" />
+  <img alt="firekeeper snake eating the contribution grid" src="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" width="100%" />
+</picture>
+
+## 📊 Pulse
+
+<div align="center">
+  <img height="150" src="https://github-readme-stats.vercel.app/api/pin/?username=qtjg&repo=hearth&theme=radical&hide_border=true" alt="hearth repo stats" />
+  &nbsp;&nbsp;
+  <img height="150" src="https://github-readme-stats.vercel.app/api/top-langs/?username=qtjg&layout=compact&theme=radical&hide_border=true&langs_count=6" alt="top languages" />
 </div>
 
 ---
@@ -167,37 +263,13 @@ a conflict detector that flags duplicates and system-shortcut collisions
 
 ---
 
-## 🏗️ How It Works (The Threading Architecture)
-
-Stream resolution and catalogue search run completely asynchronously on
-**isolated thread pools**, so audio decoding never queues behind heavy work:
-
-1. **Playback Pool** — dedicated to `LoadJob`: the instant you pick a track,
-   its audio stream is resolved off the GUI thread and handed to
-   `QMediaPlayer`.
-2. **Background Pool** — `SearchJob` (YT Music guest API with exponential
-   retry backoff). Typing never stalls the ribbon.
-
-```mermaid
-flowchart LR
-    A["Search / Paste a Link"] --> B["SearchJob (Background Pool)"]
-    B --> C["Results List"]
-    C -->|pick| D["PlaybackCore (Queue Engine)"]
-    D --> E["LoadJob (Playback Pool)"]
-    E -->|resolved URL + loudness| F["QMediaPlayer: Instant Playback"]
-    F --> G["SQLite History"]
-    F --> H["Now-Playing Toast"]
-```
-
----
-
 ## 🗂️ Project Structure
 
-```
+```text
 hearth/
 ├── hearth/
-│   ├── app.py          → lifecycle, persistence, hotkeys, logging
-│   ├── catalog.py      → YT Music guest search, link parsing, retry backoff
+│   ├── app.py          → lifecycle, persistence, hotkeys, logging, radio wiring
+│   ├── catalog.py      → YT Music guest search, scopes, radio, lyrics, retry backoff
 │   ├── config.py       → palettes, tunables, hotkey defaults (single source of truth)
 │   ├── cover.py        → cover tiles: painted flame fallback + async album art
 │   ├── hotkeys.py      → conflict detection & override merging
@@ -205,14 +277,15 @@ hearth/
 │   ├── models.py       → Track dataclass & serialization
 │   ├── panel.py        → the floating ribbon (legacy companion UI)
 │   ├── player.py       → queue engine (pure) + lazy Qt Multimedia backend
-│   ├── storage.py      → SQLite favorites, history & playlists
+│   ├── share.py        → portable .hearthplaylist.json import / export codecs
+│   ├── storage.py      → SQLite favorites, history, playlists & play counts
 │   ├── stream.py       → yt-dlp resolver, format picker, loudness gain
 │   ├── theme.py        → stylesheets compiled from Palette tokens
 │   ├── toast.py        → non-focus-stealing now-playing toast
 │   ├── tray.py         → tray presence, painted icon, single-instance guard
-│   ├── window.py       → the three-pane main window (sidebar/shelves/transport)
+│   ├── window.py       → three-pane main window + Now Playing view
 │   └── utils.py        → small zero-dependency helpers
-├── tests/              → 99 headless tests (offscreen Qt platform)
+├── tests/              → 155 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -223,9 +296,10 @@ hearth/
 
 ## 🧪 Testing
 
-99 tests cover models, palettes, playlists, storage, retry backoff, format
+155 tests cover models, palettes, playlists, storage, retry backoff, format
 picking, queue semantics, hotkey conflicts, the main window (views, player
-bar, queue dock, pin flow), and the real app booting headless:
+bar, queue dock, pin flow), radio / lyrics / autoplay flows, playlist share
+codecs, and the real app booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -240,6 +314,7 @@ not just claimed.
 ## 🗺️ Roadmap
 
 - 🎨 Artist pages & mood shelves
+- 🎤 Synced (time-stamped) lyrics
 - 🖼️ Drag-and-drop playlist track reordering
 - 📦 AUR package publication
 
@@ -250,5 +325,7 @@ not just claimed.
 **Hearth** is distributed under the [MIT License](LICENSE).
 
 <div align="center">
-<sub><strong>Hearth</strong> — keep the fire warm. 🔥</sub>
+
+<img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:7C1D12,50:E8491D,100:FF6B35&height=130&section=footer&text=keep%20the%20fire%20warm%20🔥&fontSize=26&fontColor=fff8f2&animation=blinking&desc=♪%20♪%20♪&descSize=16&descColor=ffd9c2&descAlignY=78" width="100%" alt="footer"/>
+
 </div>
