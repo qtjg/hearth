@@ -14,8 +14,8 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from . import config
 from .catalog import Catalog
 from .hotkeys import effective_chords
-from .jobs import AlbumJob, LoadJob, LyricsJob, RadioJob, ScopedSearchJob, SearchJob
-from .models import Track
+from .jobs import AlbumJob, DiscoverJob, LoadJob, LyricsJob, RadioJob, ScopedSearchJob, SearchJob
+from .models import Album, Collection, Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
 from .storage import HearthStore
@@ -91,6 +91,11 @@ class Hearth:
         self.store = HearthStore(self._dir / "hearth.db")
         self.catalog = Catalog()
         self._lyrics_cache: dict[str, str | None] = {}
+        # Discover caches: sections fetched once, playlists per category,
+        # explore shelves reused across its three chips.
+        self._discover_moods: list | None = None
+        self._mood_playlists_cache: dict[str, list[Collection]] = {}
+        self._explore_cache: tuple | None = None
         # In-flight jobs are tracked in the module-level _INFLIGHT registry
         # so they survive even if this Hearth object is torn down early.
 
@@ -154,6 +159,12 @@ class Hearth:
         w.sleep_requested.connect(self._set_sleep)
         w.home_refresh_requested.connect(self._refresh_home)
         w.library_refresh_requested.connect(self._refresh_library)
+        w.discover_refresh_requested.connect(self._open_discover)
+        w.discover_category_selected.connect(self._discover_category)
+        w.discover_collection_opened.connect(self._discover_collection)
+        w.discover_charts_requested.connect(self._discover_charts)
+        w.discover_explore_requested.connect(self._discover_explore)
+        w.discover_enqueue_all_requested.connect(self._enqueue_all)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -358,6 +369,141 @@ class Hearth:
         self.window.set_favorites(self.store.favorites()[:12])
         self.window.set_recent(self.store.history(12))
         self.window.refresh_playlists()
+
+    # --- discover: the whole world's music ---
+
+    def _open_discover(self) -> None:
+        """Discover tab opened: serve cached sections or fetch them once."""
+        if self._discover_moods is not None:
+            self.window.discover_view.set_sections(self._discover_moods)
+            return
+        if not self._enable_streaming:
+            return  # unit tests: no network shelves
+        self.window.discover_view.set_status("Loading the world's music…")
+        job = DiscoverJob(self.catalog, "moods")
+        job.signals.finished.connect(self._on_discover_moods)
+        job.signals.failed.connect(
+            lambda: self.surface.set_status("Discover could not load — try again")
+        )
+        self._launch(job)
+
+    def _on_discover_moods(self, payload) -> None:
+        _kind, sections = payload
+        self._discover_moods = list(sections)
+        self.window.discover_view.set_sections(self._discover_moods)
+
+    def _discover_category(self, params: str) -> None:
+        """A mood/genre subcategory was picked — serve cache or fetch playlists."""
+        if not params:
+            return
+        cached = self._mood_playlists_cache.get(params)
+        if cached is not None:
+            self.window.discover_view.set_collections(list(cached))
+            self.surface.set_status(f"{len(cached)} playlists")
+            return
+        if not self._enable_streaming:
+            return
+        self.window.discover_view.set_status("Loading playlists…")
+        job = DiscoverJob(self.catalog, "mood_playlists", params)
+        job.signals.finished.connect(
+            lambda payload, p=params: self._on_mood_playlists(p, payload[1])
+        )
+        job.signals.failed.connect(
+            lambda: self.surface.set_status("Could not load that category")
+        )
+        self._launch(job)
+
+    def _on_mood_playlists(self, params: str, collections: list[Collection]) -> None:
+        self._mood_playlists_cache[params] = list(collections)
+        self.window.discover_view.set_collections(list(collections))
+        self.surface.set_status(
+            f"{len(collections)} playlists" if collections else "Nothing here yet"
+        )
+
+    def _discover_charts(self) -> None:
+        if not self._enable_streaming:
+            return
+        self.window.discover_view.set_status("Loading charts…")
+        job = DiscoverJob(self.catalog, "charts")
+        job.signals.finished.connect(
+            lambda payload: self._on_charts(payload[1])
+        )
+        job.signals.failed.connect(
+            lambda: self.surface.set_status("Charts unavailable right now")
+        )
+        self._launch(job)
+
+    def _on_charts(self, collections: list[Collection]) -> None:
+        self.window.discover_view.set_collections(list(collections))
+        self.surface.set_status(
+            f"{len(collections)} chart playlists" if collections else "No charts found"
+        )
+
+    def _discover_explore(self, mode: str) -> None:
+        """new_releases / trending / new_videos — one fetch serves all three."""
+        if mode not in ("new_releases", "trending", "new_videos"):
+            return
+        if self._explore_cache is not None:
+            self._route_explore(mode)
+            return
+        if not self._enable_streaming:
+            return
+        self.window.discover_view.set_status("Loading explore…")
+        job = DiscoverJob(self.catalog, "explore")
+        job.signals.finished.connect(
+            lambda payload, m=mode: self._on_explore(m, payload[1])
+        )
+        job.signals.failed.connect(
+            lambda: self.surface.set_status("Explore unavailable right now")
+        )
+        self._launch(job)
+
+    def _on_explore(self, mode: str, payload) -> None:
+        self._explore_cache = payload      # (albums, trending, new_videos)
+        self._route_explore(mode)
+
+    def _route_explore(self, mode: str) -> None:
+        albums, trending, videos = self._explore_cache
+        view = self.window.discover_view
+        if mode == "new_releases":
+            view.set_collections(list(albums))
+            self.surface.set_status(f"{len(albums)} new releases")
+        elif mode == "trending":
+            view.set_track_list("🔥 Trending now", list(trending))
+            self.surface.set_status(f"{len(trending)} trending tracks")
+        else:
+            view.set_track_list("🎬 New music videos", list(videos))
+            self.surface.set_status(f"{len(videos)} new videos")
+
+    def _discover_collection(self, item) -> None:
+        """A Discover card was clicked: albums drill down, playlists open."""
+        if isinstance(item, Album):
+            self._open_album(item)
+            return
+        if not isinstance(item, Collection):
+            return
+        if not self._enable_streaming:
+            self.surface.set_status(f"Playlist: {item.title} (test mode)")
+            return
+        self.surface.set_status(f"Opening {item.title}…")
+        job = DiscoverJob(self.catalog, "playlist", item.playlist_id)
+        job.signals.finished.connect(self._on_collection_page)
+        job.signals.failed.connect(
+            lambda pid: self.surface.set_status("Could not open that playlist")
+        )
+        self._launch(job)
+
+    def _on_collection_page(self, payload) -> None:
+        _kind, (title, tracks) = payload
+        self.window.open_remote_playlist(title, tracks)
+        self.surface.set_status(f"{title} — {len(tracks)} tracks")
+
+    def _enqueue_all(self, tracks: list[Track]) -> None:
+        if not tracks:
+            return
+        self.core.engine.upcoming.extend(list(tracks))
+        self.core.queue_changed.emit()
+        self.surface.set_status(f"Queued {len(tracks)} tracks")
 
     def _on_queue_changed(self) -> None:
         self.window.set_queue(

@@ -68,6 +68,10 @@ SEEK_STEP_MS = 10_000        # ←/→ keyboard seek step
 VOLUME_STEP = 0.05           # ↑/↓ keyboard volume step
 TOP_TRACKS_LIMIT = 8         # home shelf ranking size
 
+# --- v0.6.0: discover (the whole world's music) ---
+DISCOVER_PLAYLIST_LIMIT = 300   # max tracks pulled per curated playlist page
+DISCOVER_CARD_SIZE = 150        # square thumbnail size of discover shelf cards
+
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"
 REPEAT_ONE = "one"

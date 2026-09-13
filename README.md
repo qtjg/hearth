@@ -5,8 +5,8 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+live+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-155%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.5.0-ff7a18?style=flat-square)
+![tests](https://img.shields.io/badge/tests-179%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.6.0-ff7a18?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-8b949e?style=flat-square)
@@ -132,6 +132,28 @@ Love the old vibe? The original floating ribbon is still there: run
 `./launch.sh --ribbon` (or `python -m hearth --ribbon`) for the compact
 always-on-top companion. Legacy and new share the same engine.
 
+## 🌍 Discover — Every Music in the World (v0.6)
+
+The whole YT Music catalogue, browsable without typing a single query. A new
+🧭 **Discover** tab opens the same shelves the streaming giants use — moods,
+genres, charts, releases — and every card plays in one tap:
+
+- **🔥 Charts** — Daily & Top-100 global music video charts, straight from
+  YT Music's chart engine.
+- **🎶 Trending** — the 20 tracks the world is playing right now.
+- **✨ New releases** — every fresh album this week (cards open real album
+  pages with Play all / Shuffle).
+- **🎬 New videos** — brand-new official music videos, playable list.
+- **Moods & moments** — Chill, Focus, Party, Romance, Gaming… ~280 curated
+  playlists per mood.
+- **Genres** — Bollywood & Indian, Hip-hop, Classical, Dance, Decades,
+  Indonesian and a dozen more — the world's music, literally. (This needed a
+  custom junk-card-tolerant parser layer: one malformed promo card used to
+  kill an entire shelf upstream — hearth skips the junk, keeps the shelf.)
+- **Every curated page** carries ▶ Play all · 🔀 Shuffle · ➕ Queue all
+  (100+ tracks straight into the up-next queue), plus per-track context
+  menus — pin, radio, play-next, add-to-playlist, copy link.
+
 ## ✨ What It Does
 
 | Feature | The Vibe |
@@ -150,6 +172,7 @@ always-on-top companion. Legacy and new share the same engine.
 | 🖥️ **Tray presence** | Play, pause, skip, or summon the window from the system tray; a second launch just wakes the first |
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
 | 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
+| 🌍 **Discover the world** | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
 | 📝 **Lyrics** | Now Playing page with auto-loaded lyrics, cache, and no-lyrics fallback |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
@@ -254,9 +277,10 @@ hearth/
 │   ├── toast.py        → non-focus-stealing now-playing toast
 │   ├── tray.py         → tray presence, painted icon, single-instance guard
 │   ├── window.py       → the three-pane main window (sidebar/shelves/transport)
+│   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
 ├── docs/assets/        → animated 3D SVG artwork used by this README
-├── tests/              → 155 headless tests (offscreen Qt platform)
+├── tests/              → 179 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -267,7 +291,7 @@ hearth/
 
 ## 🧪 Testing
 
-155 tests cover models, palettes, playlists, share codecs, storage, retry
+179 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
 caching, hotkey conflicts, the main window (views, player bar, queue dock with
 drag & drop, pin flow), and the real app booting headless:
@@ -284,7 +308,7 @@ not just claimed.
 
 ## 🗺️ Roadmap
 
-- 🎨 Artist pages & mood shelves
+- 🎨 Artist pages (Discover serves the shelves; artist drill-down is next)
 - 📦 AUR package publication
 - 🕓 Synced (time-cued) lyrics
 

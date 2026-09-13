@@ -7,8 +7,8 @@ import re
 import time
 from typing import Callable
 
-from .config import RETRY_ATTEMPTS, RETRY_BASE_DELAY
-from .models import Album, Track
+from .config import DISCOVER_PLAYLIST_LIMIT, RETRY_ATTEMPTS, RETRY_BASE_DELAY
+from .models import Album, Collection, Track
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,9 @@ class Catalog:
         if self._client is None:
             from ytmusicapi import YTMusic  # lazy: keeps UI startup snappy
 
+            from . import ytm_resilience
+
+            ytm_resilience.apply()  # junk cards must not kill whole shelves
             self._client = YTMusic()
         return self._client
 
@@ -253,6 +256,111 @@ class Catalog:
                     return []
                 sleep(base_delay * (2 ** attempt))
         return []
+
+    # --- discover: the whole world's music ---
+
+    def mood_categories(
+        self,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> list[tuple[str, list[dict]]]:
+        """Mood & genre sections: [(section_title, [{title, params}])]. [] on failure."""
+        data = self._retry(
+            lambda: self._get_client(client_factory).get_mood_categories(),
+            "mood-categories", attempts, base_delay, sleep, default={},
+        )
+        return [
+            (title, list(sections))
+            for title, sections in (data or {}).items()
+            if isinstance(sections, list)
+        ]
+
+    def mood_playlists(
+        self,
+        params: str,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> list[Collection]:
+        """Curated playlists for one mood/genre param. [] on failure."""
+        raw = self._retry(
+            lambda: self._get_client(client_factory).get_mood_playlists(params=params),
+            f"mood-playlists({params!r})", attempts, base_delay, sleep, default=[],
+        )
+        return self._map_collections(raw or [])
+
+    def charts(
+        self,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> list[Collection]:
+        """Global chart playlists (daily / weekly / top-100). [] on failure."""
+        data = self._retry(
+            lambda: self._get_client(client_factory).get_charts(),
+            "charts", attempts, base_delay, sleep, default={},
+        )
+        return self._map_collections((data or {}).get("videos") or [])
+
+    def explore_shelves(
+        self,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> tuple[list[Album], list[Track], list[Track]]:
+        """Explore page: (new release albums, trending tracks, new videos)."""
+        data = self._retry(
+            lambda: self._get_client(client_factory).get_explore(),
+            "explore", attempts, base_delay, sleep, default={},
+        )
+        data = data or {}
+        albums = self._map_albums(data.get("new_releases") or [])
+        trending = self._map_results((data.get("trending") or {}).get("items") or [])
+        videos = self._map_results(data.get("new_videos") or [])
+        return albums, trending, videos
+
+    def playlist(
+        self,
+        playlist_id: str,
+        limit: int = DISCOVER_PLAYLIST_LIMIT,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> tuple[str, list[Track]] | None:
+        """Full track list of a curated playlist. None on failure (never raises)."""
+        data = self._retry(
+            lambda: self._get_client(client_factory).get_playlist(
+                playlistId=playlist_id, limit=limit
+            ),
+            f"playlist({playlist_id})", attempts, base_delay, sleep,
+        )
+        data = data or {}
+        if not data.get("title"):
+            return None
+        return str(data["title"]), self._map_results(data.get("tracks") or [])
+
+    @classmethod
+    def _map_collections(cls, results: list[dict]) -> list[Collection]:
+        collections: list[Collection] = []
+        for item in results:
+            pid = item.get("playlistId") or item.get("browseId") or ""
+            if not pid:
+                continue
+            collections.append(
+                Collection(
+                    playlist_id=pid,
+                    title=item.get("title", "Unknown playlist"),
+                    subtitle=item.get("subtitle") or item.get("description") or "",
+                    thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
+                )
+            )
+        return collections
 
     @staticmethod
     def _artist_names(item: dict) -> str:

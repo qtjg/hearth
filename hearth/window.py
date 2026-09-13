@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -394,6 +395,243 @@ class LibraryView(QWidget):
 
     def set_recent(self, tracks: list[Track]) -> None:
         self._recent.set_tracks(list(tracks)[:8])
+
+
+class DiscoverView(QWidget):
+    """The whole world's music: charts, new releases, trending, moods & genres.
+
+    The view stays deliberately dumb — every click just asks the app for
+    data via a signal, and the app pushes content back in through
+    set_sections / set_collections / set_track_list.
+    """
+
+    category_selected = pyqtSignal(str)        # mood/genre params
+    collection_opened = pyqtSignal(object)     # Collection | Album card clicked
+    charts_requested = pyqtSignal()
+    explore_requested = pyqtSignal(str)        # "new_releases" | "trending" | "new_videos"
+    track_activated = pyqtSignal(object, list)
+    menu_requested = pyqtSignal(object, object)
+
+    MAX_GRID_CARDS = 60
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._sections: list[tuple[str, list[dict]]] = []
+        self._mode = ""          # which chip is lit ("section" or an explore mode)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 18, 24, 12)
+        outer.setSpacing(10)
+
+        head = QHBoxLayout()
+        hero = QLabel("🌍 Discover")
+        hero.setProperty("hero", True)
+        self._status = QLabel("every mood, genre and corner of the world's music")
+        self._status.setProperty("dim", True)
+        head.addWidget(hero)
+        head.addStretch(1)
+        head.addWidget(self._status)
+        outer.addLayout(head)
+
+        chips = QHBoxLayout()
+        chips.setSpacing(6)
+        self._chips: dict[str, QPushButton] = {}
+        for key, label in (
+            ("charts", "🔥 Charts"),
+            ("new_releases", "✨ New releases"),
+            ("trending", "🎶 Trending"),
+            ("new_videos", "🎬 New videos"),
+        ):
+            chip = QPushButton(label)
+            chip.setProperty("chip", True)
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.clicked.connect(lambda _=False, k=key: self._chip_clicked(k))
+            self._chips[key] = chip
+            chips.addWidget(chip)
+        self._chip_sep = QLabel("·")
+        self._chip_sep.setProperty("dim", True)
+        chips.addWidget(self._chip_sep)
+        chips.addStretch(1)
+        self._chips_row = chips          # direct handle — section chips insert here
+        outer.addLayout(chips)
+
+        self._body = QStackedWidget()
+        outer.addWidget(self._body, 1)
+
+        # page 0 — grid: subcategory list + collection cards
+        grid_page = QWidget()
+        grid_lay = QHBoxLayout(grid_page)
+        grid_lay.setContentsMargins(0, 0, 0, 0)
+        grid_lay.setSpacing(12)
+        self._cat_list = QListWidget()
+        self._cat_list.setProperty("sidebar", True)
+        self._cat_list.setFixedWidth(200)
+        self._cat_list.itemClicked.connect(self._category_clicked)
+        grid_lay.addWidget(self._cat_list)
+        self._grid_area = QScrollArea()
+        self._grid_area.setWidgetResizable(True)
+        self._grid_area.setFrameShape(QScrollArea.Shape.NoFrame)
+        self._grid_host = QWidget()
+        self._grid_lay = QGridLayout(self._grid_host)
+        self._grid_lay.setContentsMargins(0, 0, 8, 0)
+        self._grid_lay.setSpacing(10)
+        self._grid_lay.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self._grid_area.setWidget(self._grid_host)
+        grid_lay.addWidget(self._grid_area, 1)
+        self._body.addWidget(grid_page)
+
+        # page 1 — straight track list (trending / new videos)
+        self._track_page = TrackListView(palette)
+        self._track_page.track_activated.connect(self.track_activated)
+        self._track_page.menu_requested.connect(self.menu_requested)
+        self._body.addWidget(self._track_page)
+
+    # --- chips / navigation ---
+
+    def _chip_clicked(self, key: str) -> None:
+        if key == "charts":
+            self._light_chip("charts")
+            self.charts_requested.emit()
+        elif key in ("new_releases", "trending", "new_videos"):
+            self._light_chip(key)
+            self.explore_requested.emit(key)
+
+    def _light_chip(self, key: str) -> None:
+        self._mode = key
+        for name, chip in self._chips.items():
+            chip.setChecked(name == key)
+
+    def set_sections(self, sections: list[tuple[str, list[dict]]]) -> None:
+        """(Re)build the mood/genre section chips and open the first one."""
+        self._sections = list(sections)
+        # drop stale section chips (everything after the built-in four)
+        for name in [k for k in self._chips if k not in
+                     ("charts", "new_releases", "trending", "new_videos")]:
+            chip = self._chips.pop(name)
+            chip.deleteLater()
+        for index, (title, _subs) in enumerate(self._sections):
+            chip = QPushButton(title)
+            chip.setProperty("chip", True)
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            key = f"section-{index}"
+            chip.clicked.connect(
+                lambda _=False, i=index, k=key: self._section_chip(i, k)
+            )
+            self._chips[key] = chip
+            self._chips_row.insertWidget(
+                self._chips_row.indexOf(self._chip_sep) + 1 + index, chip
+            )
+        if self._sections:
+            self._section_chip(0, "section-0")
+
+    def _section_chip(self, index: int, key: str) -> None:
+        self._light_chip(key)
+        self.show_section(index)
+
+    def show_section(self, index: int) -> None:
+        """Fill the subcategory list for a section and select the first one."""
+        if not (0 <= index < len(self._sections)):
+            return
+        _title, submenus = self._sections[index]
+        self._cat_list.clear()
+        for sub in submenus:
+            item = QListWidgetItem(sub.get("title", "?"))
+            item.setData(Qt.ItemDataRole.UserRole, sub.get("params", ""))
+            self._cat_list.addItem(item)
+        self._mode = "section"
+        self._body.setCurrentIndex(0)
+        self._cat_list.setVisible(bool(submenus))
+        if self._cat_list.count():
+            self._cat_list.setCurrentRow(0)
+            self.category_selected.emit(submenus[0].get("params", ""))
+
+    def _category_clicked(self, item: QListWidgetItem) -> None:
+        params = item.data(Qt.ItemDataRole.UserRole)
+        if params:
+            self.category_selected.emit(str(params))
+
+    # --- content in ---
+
+    def set_collections(self, items: list) -> None:
+        """Grid of Collection / Album cards."""
+        self._cat_list.setVisible(self._mode == "section")
+        self._body.setCurrentIndex(0)
+        while self._grid_lay.count():
+            item = self._grid_lay.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for index, thing in enumerate(items[: self.MAX_GRID_CARDS]):
+            self._grid_lay.addWidget(
+                self._make_card(thing), index // 4, index % 4
+            )
+        overflow = len(items) - self.MAX_GRID_CARDS
+        if overflow > 0:
+            note = QLabel(f"… and {overflow} more — pick a subcategory to narrow it down")
+            note.setProperty("dim", True)
+            rows = (self.MAX_GRID_CARDS + 3) // 4
+            self._grid_lay.addWidget(note, rows, 0, 1, 4)
+
+    def _make_card(self, thing) -> QPushButton:
+        card = QPushButton()
+        card.setProperty("card", True)
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setFixedSize(config.DISCOVER_CARD_SIZE, config.DISCOVER_CARD_SIZE + 64)
+        inner = QVBoxLayout(card)
+        inner.setContentsMargins(10, 10, 10, 10)
+        inner.setSpacing(4)
+        tile = CoverTile(self._palette, config.DISCOVER_CARD_SIZE - 20)
+        thumbnail = getattr(thing, "thumbnail", "")
+        if thumbnail:
+            tile.set_track_cover(thumbnail)
+        title = QLabel(thing.title)
+        title.setWordWrap(True)
+        title.setMaximumHeight(30)
+        subtitle = getattr(thing, "subtitle", "") or getattr(thing, "artist", "")
+        sub = QLabel(str(subtitle or ""))
+        sub.setProperty("dim", True)
+        inner.addWidget(tile)
+        inner.addWidget(title, 1)
+        inner.addWidget(sub)
+        card.clicked.connect(lambda _=False, t=thing: self.collection_opened.emit(t))
+        return card
+
+    def set_track_list(self, title: str, tracks: list[Track]) -> None:
+        """Straight playable list (trending / new videos)."""
+        self._mode = ""
+        self._body.setCurrentIndex(1)
+        self._track_page.set_header(title)
+        self._track_page.set_tracks(list(tracks))
+
+    def set_status(self, text: str) -> None:
+        self._status.setText(text)
+
+
+class RemotePlaylistView(TrackListView):
+    """A curated Discover playlist opened as a page: play all / shuffle / queue all."""
+
+    play_all_requested = pyqtSignal(list, int)
+    shuffle_requested_sig = pyqtSignal(list)
+    enqueue_all_requested = pyqtSignal(list)
+
+    def __init__(self, palette: Palette):
+        super().__init__(palette)
+        actions = QHBoxLayout()
+        play = QPushButton("▶ Play all")
+        play.setProperty("accent", True)
+        play.clicked.connect(lambda: self.play_all_requested.emit(list(self._tracks), 0))
+        shuffle = QPushButton("🔀 Shuffle")
+        shuffle.clicked.connect(lambda: self.shuffle_requested_sig.emit(list(self._tracks)))
+        enqueue = QPushButton("➕ Queue all")
+        enqueue.setToolTip("Append every track to the up-next queue")
+        enqueue.clicked.connect(lambda: self.enqueue_all_requested.emit(list(self._tracks)))
+        for b in (play, shuffle, enqueue):
+            actions.addWidget(b)
+        actions.addStretch(1)
+        self.layout().insertLayout(2, actions)
 
 
 class PlaylistView(TrackListView):
@@ -778,6 +1016,12 @@ class MainWindow(QMainWindow):
     mute_toggled = pyqtSignal()
     home_refresh_requested = pyqtSignal()
     library_refresh_requested = pyqtSignal()
+    discover_refresh_requested = pyqtSignal()
+    discover_category_selected = pyqtSignal(str)     # mood/genre params
+    discover_collection_opened = pyqtSignal(object)  # Collection | Album
+    discover_charts_requested = pyqtSignal()
+    discover_explore_requested = pyqtSignal(str)     # new_releases|trending|new_videos
+    discover_enqueue_all_requested = pyqtSignal(list)  # queue a whole curated list
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -786,7 +1030,7 @@ class MainWindow(QMainWindow):
     volume_changed = pyqtSignal(float)
     seek_requested = pyqtSignal(int)
 
-    VIEWS = ("home", "search", "library", "now")
+    VIEWS = ("home", "discover", "search", "library", "now")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -797,14 +1041,17 @@ class MainWindow(QMainWindow):
         self.resize(config.WINDOW_WIDTH, config.WINDOW_HEIGHT)
 
         self.home_view = HomeView(self._palette)
+        self.discover_view = DiscoverView(self._palette)
         self.search_view = SearchView(self._palette)
         self.library_view = LibraryView(self._palette)
         self.now_view = NowView(self._palette)
         self.album_view = AlbumView(self._palette)
+        self.remote_playlist_view = RemotePlaylistView(self._palette)
 
         self.stack = QStackedWidget()
-        for view in (self.home_view, self.search_view, self.library_view,
-                     self.now_view, self.album_view):
+        for view in (self.home_view, self.discover_view, self.search_view,
+                     self.library_view, self.now_view, self.album_view,
+                     self.remote_playlist_view):
             self.stack.addWidget(view)
 
         self.player_bar = PlayerBar(self._palette)
@@ -842,7 +1089,8 @@ class MainWindow(QMainWindow):
         lay.addSpacing(10)
 
         self._nav: dict[str, QPushButton] = {}
-        for key, label in (("home", "🏠 Home"), ("search", "🔍 Search"),
+        for key, label in (("home", "🏠 Home"), ("discover", "🧭 Discover"),
+                           ("search", "🔍 Search"),
                            ("library", "📚 Your Library"),
                            ("now", "🎧 Now Playing")):
             btn = QPushButton(label)
@@ -939,6 +1187,26 @@ class MainWindow(QMainWindow):
             lambda tracks: self.playlist_picked.emit(list(tracks), 0)
         )
         self.album_view.menu_requested.connect(self._track_menu)
+        d = self.discover_view
+        d.category_selected.connect(self.discover_category_selected.emit)
+        d.collection_opened.connect(self.discover_collection_opened.emit)
+        d.charts_requested.connect(self.discover_charts_requested.emit)
+        d.explore_requested.connect(self.discover_explore_requested.emit)
+        d.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        d.menu_requested.connect(self._track_menu)
+        self.remote_playlist_view.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        self.remote_playlist_view.play_all_requested.connect(self.playlist_picked.emit)
+        self.remote_playlist_view.shuffle_requested_sig.connect(
+            lambda tracks: self.playlist_picked.emit(list(tracks), 0)
+        )
+        self.remote_playlist_view.menu_requested.connect(self._track_menu)
+        self.remote_playlist_view.enqueue_all_requested.connect(
+            self.discover_enqueue_all_requested.emit
+        )
         self.library_view.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )
@@ -979,6 +1247,8 @@ class MainWindow(QMainWindow):
             self.home_refresh_requested.emit()
         elif name == "library":
             self.library_refresh_requested.emit()
+        elif name == "discover":
+            self.discover_refresh_requested.emit()
         elif name == "search":
             self.search_view._box.setFocus()
 
@@ -1002,6 +1272,14 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(self.album_view)
         for key, btn in self._nav.items():
             btn.setChecked(key == "search")   # albums arrive from Search
+
+    def open_remote_playlist(self, title: str, tracks: list[Track]) -> None:
+        """A curated Discover playlist, opened as a full page."""
+        self.remote_playlist_view.set_header(f"🎧 {title}")
+        self.remote_playlist_view.set_tracks(list(tracks))
+        self.stack.setCurrentWidget(self.remote_playlist_view)
+        for key, btn in self._nav.items():
+            btn.setChecked(key == "discover")   # arrived from Discover
 
     # --- keyboard shortcuts (text-field safe) ---
 

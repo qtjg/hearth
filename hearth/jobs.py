@@ -95,6 +95,48 @@ class AlbumJob(QRunnable):
             self.signals.emit_safe(self.signals.failed, self.browse_id)
 
 
+class DiscoverJob(QRunnable):
+    """One generic fetcher for every Discover page; emits (kind, payload).
+
+    kind            payload
+    ------------    -------------------------------------------------
+    moods           list[(section_title, [{title, params}])]
+    mood_playlists  list[Collection]
+    charts          list[Collection]
+    explore         (list[Album], list[Track], list[Track])
+    playlist        (title, list[Track]) — or failed for a dead id
+    """
+
+    KINDS = ("moods", "mood_playlists", "charts", "explore", "playlist")
+
+    def __init__(self, catalog: Catalog, kind: str, arg=None):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.catalog = catalog
+        self.kind = kind
+        self.arg = arg
+
+    def run(self) -> None:  # noqa: D102
+        if self.kind == "moods":
+            payload = self.catalog.mood_categories()
+        elif self.kind == "mood_playlists":
+            payload = self.catalog.mood_playlists(self.arg)
+        elif self.kind == "charts":
+            payload = self.catalog.charts()
+        elif self.kind == "explore":
+            payload = self.catalog.explore_shelves()
+        elif self.kind == "playlist":
+            payload = self.catalog.playlist(self.arg)
+            if payload is None:
+                self.signals.emit_safe(self.signals.failed, self.arg)
+                return
+        else:
+            log.warning("DiscoverJob got unknown kind %r", self.kind)
+            return
+        self.signals.emit_safe(self.signals.finished, (self.kind, payload))
+
+
 class LoadJob(QRunnable):
     """Runs on the dedicated playback pool — stream resolution never waits on anything."""
 

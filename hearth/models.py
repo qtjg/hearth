@@ -22,6 +22,20 @@ class Album:
 
 
 @dataclass
+class Collection:
+    """A browsable Discover shelf card: curated playlist, chart, or mood set."""
+
+    playlist_id: str
+    title: str
+    subtitle: str = ""
+    thumbnail: str = ""
+
+    @property
+    def display_name(self) -> str:
+        return self.title
+
+
+@dataclass
 class Track:
     """A playable song in the Hearth universe."""
 
