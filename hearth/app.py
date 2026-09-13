@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from . import config
 from .catalog import Catalog
 from .hotkeys import effective_chords
-from .jobs import LoadJob, LyricsJob, RadioJob, SearchJob
+from .jobs import AlbumJob, LoadJob, LyricsJob, RadioJob, ScopedSearchJob, SearchJob
 from .models import Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
@@ -138,12 +138,17 @@ class Hearth:
     def _wire_window(self) -> None:
         w = self.window
         w.search_submitted.connect(self._run_search)
+        w.search_scoped.connect(self._run_scoped_search)
+        w.album_opened.connect(self._open_album)
         w.playlist_picked.connect(self._play_list)
         w.play_next_requested.connect(self._play_next)
         w.enqueue_requested.connect(self._enqueue)
         w.pin_toggled.connect(self._toggle_pin)
         w.queue_remove_requested.connect(self._remove_from_queue)
         w.queue_reorder_requested.connect(self._reorder_queue)
+        w.queue_jump_requested.connect(self._jump_to_queue_index)
+        w.queue_clear_requested.connect(self._clear_queue)
+        w.mute_toggled.connect(self._toggle_mute)
         w.radio_requested.connect(self._start_radio)
         w.rate_cycled.connect(self._cycle_rate)
         w.sleep_requested.connect(self._set_sleep)
@@ -229,6 +234,40 @@ class Hearth:
         job.signals.failed.connect(lambda msg: self.surface.set_status(f"Search failed: {msg}"))
         self._launch(job)
 
+    def _run_scoped_search(self, query: str, scope: str) -> None:
+        """Songs / Videos / Albums scopes from the search-page chips."""
+        if scope == "songs":
+            self._run_search(query)
+            return
+        self.surface.set_status(f"Searching {scope}…")
+        job = ScopedSearchJob(self.catalog, query, scope=scope)
+        job.signals.finished.connect(self._show_scoped_results)
+        job.signals.failed.connect(lambda msg: self.surface.set_status(f"Search failed: {msg}"))
+        self._launch(job)
+
+    def _show_scoped_results(self, payload) -> None:
+        scope, results = payload
+        if scope == "albums":
+            self.window.show_album_results(results)
+            self.surface.set_status(f"{len(results)} albums" if results else "No albums found")
+            return
+        self._show_search_results(results)
+
+    def _open_album(self, album) -> None:
+        """Album drill-down: fetch the full track list, then open its page."""
+        self.surface.set_status(f"Opening {album.title}…")
+        job = AlbumJob(self.catalog, album.browse_id)
+        job.signals.finished.connect(self._on_album_ready)
+        job.signals.failed.connect(
+            lambda bid: self.surface.set_status("Could not open that album")
+        )
+        self._launch(job)
+
+    def _on_album_ready(self, payload) -> None:
+        album, tracks = payload
+        self.window.open_album(album, tracks)
+        self.surface.set_status(f"{album.title} — {len(tracks)} tracks")
+
     def _show_search_results(self, tracks: list[Track]) -> None:
         self.window.show_search_results(tracks)
         self.panel.show_results(tracks)
@@ -263,6 +302,33 @@ class Hearth:
         self.core.engine.set_order(list(upcoming))
         self.core.queue_changed.emit()
 
+    def _jump_to_queue_index(self, index: int) -> None:
+        """Double-click / 'Play now' in the queue: promote that track."""
+        upcoming = self.core.engine.upcoming
+        if not (0 <= index < len(upcoming)):
+            return
+        track = upcoming.pop(index)
+        self.core.play_track(track)
+
+    def _clear_queue(self) -> None:
+        self.core.engine.upcoming.clear()
+        self.core.queue_changed.emit()
+        self.surface.set_status("Queue cleared")
+
+    _pre_mute_volume: float | None = None
+
+    def _toggle_mute(self) -> None:
+        if self.core.volume > 0.0:
+            self._pre_mute_volume = self.core.volume
+            self.core.set_volume(0.0)
+            self.window.set_volume(0.0)
+            self.surface.set_status("Muted")
+        else:
+            restore = self._pre_mute_volume or 0.8
+            self.core.set_volume(restore)
+            self.window.set_volume(restore)
+            self.surface.set_status("Unmuted")
+
     def _toggle_pin(self, track: Track) -> None:
         if self.store.is_pinned(track.video_id):
             self.store.unpin(track.video_id)
@@ -276,6 +342,7 @@ class Hearth:
     def _refresh_home(self) -> None:
         self.window.set_recent(self.store.history(12))
         self.window.set_favorites(self.store.favorites()[:12])
+        self.window.set_top_tracks(self.store.top_tracks(config.TOP_TRACKS_LIMIT))
         if not self._enable_streaming:
             return  # unit tests: no network shelves
         for query in config.QUICK_PICKS:

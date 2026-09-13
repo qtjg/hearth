@@ -34,6 +34,34 @@ the way every major streaming client works — three panes, one window:
   next, draggable seek with time labels, queue drawer, and a volume slider.
 - **Queue drawer** — dockable "Up next" panel; right-click any row to remove it.
 
+## 📻 Radio, Lyrics & Words (v0.4 / v0.5)
+
+The clone wave: the features people actually live in on the big streaming
+services, built on the same guest-API engine — no account, no keys:
+
+- **Now Playing view** — a full page with a big cover, the current track's
+  identity, a ♡ pin, and a live lyrics sheet (auto-loaded per track, cached,
+  with a graceful "no lyrics" state).
+- **📻 Start Radio** — right-click any track, hit the player-bar button, or
+  press it on the Now Playing page: hearth fetches related tracks from the
+  YT Music watch graph and queues them around your seed.
+- **♾️ Endless autoplay** — when the queue runs dry (repeat off), the radio
+  engine quietly refills it and the music keeps going. That's the whole point.
+- **🔍 Search scopes** — ♪ Songs · ▶ Videos · 💿 Albums chips. Album results
+  open a real album page with ▶ Play all and 🔀 Shuffle.
+- **🎛️ Queue power tools** — drag & drop reordering (the playing row stays
+  pinned), ▶ Play now, ↑↓ move, ✕ remove, and a Clear button. Double-click
+  any upcoming row to jump straight to it.
+- **🔥 Top tracks** — a Home shelf ranked by your real play counts.
+- **⌨️ In-window keys** — `Space` play/pause · `←`/`→` seek ±10s · `↑`/`↓`
+  volume · `/` search · `M` mute · `S` shuffle · `R` repeat · `N` now playing
+  · `Q` queue — all guarded, so typing in the search box never triggers them.
+- **💾 Library backup** — export or import every playlist as portable JSON
+  (`.hearthplaylist.json`), plus full-library favorites+playlists export via
+  the store API. Files are boring JSON on purpose: no lock-in, no cloud.
+- **🔗 Copy YouTube link** — every track's context menu carries its URL.
+- **🎚️ Speed cycler & ⏾ sleep menu** live on the player bar (`1x` and `⏾`).
+
 Love the old vibe? The original floating ribbon is still there: run
 `./launch.sh --ribbon` (or `python -m hearth --ribbon`) for the compact
 always-on-top companion. Legacy and new share the same engine.
@@ -55,7 +83,11 @@ always-on-top companion. Legacy and new share the same engine.
 | ♥ **Favorites & history** | Pin tracks and revisit your listening history — local SQLite, no account, no telemetry |
 | 🖥️ **Tray presence** | Play, pause, skip, or summon the window from the system tray; a second launch just wakes the first |
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
-| 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, favorites, playlists, and history persist |
+| 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
+| 📝 **Lyrics** | Now Playing page with auto-loaded lyrics, cache, and no-lyrics fallback |
+| 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
+| 🔥 **Top tracks** | Home shelf ranked by your real play counts |
+| 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, autoplay, favorites, playlists, and history persist |
 
 ---
 
@@ -123,6 +155,11 @@ Both use an isolated `.venv` — your system Python stays untouched.
 | `Ctrl` + `Alt` + `←` | Previous track |
 | `Ctrl` + `Alt` + `E` | Toggle the window / ribbon |
 | `Ctrl` + `Alt` + `F` | Focus search |
+
+**In-window keys** (v0.5) work wherever you are — `Space` play/pause,
+`←`/`→` seek ±10s, `↑`/`↓` volume, `/` focus search, `M` mute, `S` shuffle,
+`R` repeat, `N` Now Playing, `Q` queue drawer. They yield automatically while
+you're typing in the search box.
 
 Bindings are merged from user overrides on top of the defaults and validated by
 a conflict detector that flags duplicates and system-shortcut collisions
@@ -202,9 +239,8 @@ not just claimed.
 
 ## 🗺️ Roadmap
 
-- ♾️ Endless radio queue from the recommendation graph
-- 🎤 Live lyrics tab
-- 🖼️ Drag-and-drop playlist reordering
+- 🎨 Artist pages & mood shelves
+- 🖼️ Drag-and-drop playlist track reordering
 - 📦 AUR package publication
 
 ---

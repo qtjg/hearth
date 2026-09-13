@@ -48,6 +48,14 @@ QPushButton[card="true"] {
 }
 QPushButton[card="true"]:hover { border: 1px solid $accent; background: $surface_alt; }
 
+QPushButton[chip="true"] {
+    background: transparent; color: $text_dim;
+    border: 1px solid $hairline; border-radius: 12px;
+    padding: 3px 14px; font-weight: 600;
+}
+QPushButton[chip="true"]:hover { color: $text; border: 1px solid $accent; }
+QPushButton[chip="true"]:checked { background: $accent; color: $bg; border: 1px solid $accent; }
+
 QLabel[tile="true"] {
     background: $surface_alt; border-radius: 10px;
 }

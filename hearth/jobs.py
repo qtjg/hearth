@@ -77,39 +77,6 @@ class ScopedSearchJob(QRunnable):
             )
 
 
-class LyricsJob(QRunnable):
-    """Fetches lyrics for the Now Playing pane; emits text or '' for none."""
-
-    def __init__(self, catalog: Catalog, video_id: str):
-        super().__init__()
-        self.setAutoDelete(False)
-        self.signals = _SignalCarrier()
-        self.catalog = catalog
-        self.video_id = video_id
-
-    def run(self) -> None:  # noqa: D102
-        text = self.catalog.lyrics(self.video_id)
-        self.signals.emit_safe(self.signals.finished, (self.video_id, text or ""))
-
-
-class RadioJob(QRunnable):
-    """Related-tracks radio for a seed video id."""
-
-    def __init__(self, catalog: Catalog, video_id: str):
-        super().__init__()
-        self.setAutoDelete(False)
-        self.signals = _SignalCarrier()
-        self.catalog = catalog
-        self.video_id = video_id
-
-    def run(self) -> None:  # noqa: D102
-        tracks = self.catalog.radio(self.video_id)
-        if tracks:
-            self.signals.emit_safe(self.signals.finished, tracks)
-        else:
-            self.signals.emit_safe(self.signals.failed, self.video_id)
-
-
 class AlbumJob(QRunnable):
     """Opens an album page; emits (Album, [Track])."""
 

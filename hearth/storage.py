@@ -89,6 +89,15 @@ class HearthStore:
         ).fetchall()
         return [Track.from_json(payload) for (payload,) in rows]
 
+    def top_tracks(self, limit: int = 10) -> list[Track]:
+        """Most-played tracks; ties broken by most-recent play."""
+        rows = self._db.execute(
+            "SELECT payload FROM history GROUP BY video_id "
+            "ORDER BY COUNT(*) DESC, MAX(played_at) DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [Track.from_json(payload) for (payload,) in rows]
+
     def prune_history(self, keep: int = 500) -> int:
         """Delete history beyond the newest `keep` rows. Returns rows removed."""
         cur = self._db.execute(
@@ -185,3 +194,81 @@ class HearthStore:
             (playlist_id,),
         ).fetchall()
         return [Track.from_json(payload) for (payload,) in rows]
+
+    # --- library backup (portable JSON, favorites + playlists) ---
+
+    EXPORT_FORMAT = "hearth-library"
+
+    def export_library(self) -> dict:
+        """Everything user-created as one portable dict."""
+        return {
+            "format": self.EXPORT_FORMAT,
+            "version": 1,
+            "favorites": [t.to_dict() for t in self.favorites()],
+            "playlists": [
+                {
+                    "name": name,
+                    "tracks": [t.to_dict() for t in self.playlist_tracks(pid)],
+                }
+                for pid, name, _count in self.playlists()
+            ],
+        }
+
+    def import_library(self, data: dict, merge: bool = False) -> tuple[int, int]:
+        """Restore an export_library() dict. Returns (playlists, tracks) added.
+
+        merge=False wipes the current library first; merge=True skips entries
+        that already exist. Corrupt entries are skipped individually — a
+        partial file restores as much as it can.
+        """
+        if not isinstance(data, dict) or data.get("format") != self.EXPORT_FORMAT:
+            raise ValueError("not a hearth library export")
+        if not merge:
+            for pid, _name, _count in self.playlists():
+                self.delete_playlist(pid)
+            for track in self.favorites():
+                self.unpin(track.video_id)
+
+        playlists_added = 0
+        tracks_added = 0
+        for entry in data.get("favorites") or []:
+            track = self._track_from(entry)
+            if track is None or self.is_pinned(track.video_id):
+                continue
+            self.pin(track)
+            tracks_added += 1
+        for entry in data.get("playlists") or []:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                continue
+            pid = self._playlist_for_import(name, merge=merge)
+            if pid is None:
+                playlists_added += 1
+                pid = self.create_playlist(name)
+            for track_data in entry.get("tracks") or []:
+                track = self._track_from(track_data)
+                if track is not None and self.add_to_playlist(pid, track):
+                    tracks_added += 1
+        return playlists_added, tracks_added
+
+    def _playlist_for_import(self, name: str, merge: bool) -> int | None:
+        """merge=True reuses a same-named playlist; None = create a new one."""
+        if not merge:
+            return None
+        for pid, existing, _count in self.playlists():
+            if existing == name:
+                return pid
+        return None
+
+    def _track_from(self, data) -> Track | None:
+        if not isinstance(data, dict):
+            return None
+        try:
+            track = Track.from_dict(data)
+        except (TypeError, ValueError):
+            return None
+        if not track.video_id or not track.title:
+            return None
+        return track

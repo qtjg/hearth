@@ -11,9 +11,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from PyQt6.QtCore import Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -28,6 +30,7 @@ from PyQt6.QtWidgets import (
     QScrollArea,
     QSlider,
     QStackedWidget,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -35,7 +38,7 @@ from PyQt6.QtWidgets import (
 from . import config, share
 from .config import Palette, get_palette
 from .cover import CoverTile
-from .models import Track
+from .models import Album, Track
 from .storage import HearthStore
 from .theme import build_stylesheet
 from .utils import clock
@@ -173,7 +176,7 @@ class HomeView(QWidget):
         area.setWidget(body)
         outer.addWidget(area)
         self._shelves: dict[str, Shelf] = {}
-        for name in ("Quick picks", "Pinned favorites", "Recently played"):
+        for name in ("Quick picks", "Top tracks", "Pinned favorites", "Recently played"):
             self._shelves[name] = Shelf(palette, name)
             self._body_lay.addWidget(self._shelves[name])
             self._shelves[name].setVisible(False)
@@ -251,7 +254,7 @@ class TrackListView(QWidget):
         if item is None:
             return
         track = item.data(Qt.ItemDataRole.UserRole)
-        if track is None:
+        if not isinstance(track, Track):
             return
         menu = QMenu(self)
         self.menu_requested.emit(track, menu)
@@ -259,14 +262,19 @@ class TrackListView(QWidget):
 
 
 class SearchView(TrackListView):
-    """The search page: a prominent query box above the result rows."""
+    """The search page: query box, scope chips, and the result rows."""
 
     search_submitted = pyqtSignal(str)
+    search_scoped = pyqtSignal(str, str)      # query, scope ("songs"/"videos"/"albums")
+    album_opened = pyqtSignal(object)         # Album (double-click an album result)
+
+    SCOPES = (("songs", "♪ Songs"), ("videos", "▶ Videos"), ("albums", "💿 Albums"))
 
     def __init__(self, palette: Palette):
         super().__init__(palette)
         self._head.setText("Search")
         self.set_tracks([])
+        self._scope = "songs"
         self._box = QLineEdit()
         self._box.setPlaceholderText("What do you want to play?  (or paste a link)")
         self._debounce = QTimer(self)
@@ -276,18 +284,73 @@ class SearchView(TrackListView):
         self._box.textEdited.connect(lambda _: self._debounce.start())
         self._box.returnPressed.connect(self._emit_search)
         self.layout().insertWidget(0, self._box)
+
+        chips = QHBoxLayout()
+        chips.setSpacing(6)
+        self._chips: dict[str, QPushButton] = {}
+        for scope, label in self.SCOPES:
+            chip = QPushButton(label)
+            chip.setProperty("chip", True)
+            chip.setCheckable(True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setChecked(scope == self._scope)
+            chip.clicked.connect(lambda _=False, s=scope: self.set_scope(s))
+            self._chips[scope] = chip
+            chips.addWidget(chip)
+        chips.addStretch(1)
+        self.layout().insertLayout(1, chips)
         self._count.hide()
+
+    # --- scope ---
+
+    def set_scope(self, scope: str) -> None:
+        if scope not in self._chips:
+            return
+        changed = scope != self._scope
+        self._scope = scope
+        for name, chip in self._chips.items():
+            chip.setChecked(name == scope)
+        if changed and self.query():
+            self.search_scoped.emit(self.query(), scope)
+
+    def scope(self) -> str:
+        return self._scope
+
+    # --- results ---
+
+    def set_albums(self, albums: list[Album]) -> None:
+        """Show album cards instead of track rows (albums scope)."""
+        self._tracks = []
+        self._list.clear()
+        for album in albums:
+            label = album.title if not album.year else f"{album.title}  ·  {album.year}"
+            item = QListWidgetItem(f"💿  {label}\n      {album.artist or 'Unknown artist'}")
+            item.setSizeHint(QSize(0, config.ROW_HEIGHT + 24))
+            item.setData(Qt.ItemDataRole.UserRole, album)
+            self._list.addItem(item)
 
     def _emit_search(self) -> None:
         query = self._box.text().strip()
-        if query:
+        if not query:
+            return
+        if self._scope == "songs":
             self.search_submitted.emit(query)
+        else:
+            self.search_scoped.emit(query, self._scope)
 
     def set_query(self, text: str) -> None:
         self._box.setText(text)
 
     def query(self) -> str:
         return self._box.text().strip()
+
+    def _on_double(self, item: QListWidgetItem) -> None:
+        data = item.data(Qt.ItemDataRole.UserRole)
+        if isinstance(data, Album):
+            self.album_opened.emit(data)
+            return
+        if data is not None:
+            self.track_activated.emit(data, list(self._tracks))
 
 
 class LibraryView(QWidget):
@@ -358,6 +421,26 @@ class PlaylistView(TrackListView):
         delete = QPushButton("Delete")
         delete.clicked.connect(lambda: self.delete_requested.emit(self.playlist_id))
         for b in (play, shuffle, rename, delete):
+            actions.addWidget(b)
+        actions.addStretch(1)
+        self.layout().insertLayout(2, actions)
+
+
+class AlbumView(TrackListView):
+    """One album's track list with Play all / Shuffle actions."""
+
+    play_all_requested = pyqtSignal(list, int)
+    shuffle_requested_sig = pyqtSignal(list)
+
+    def __init__(self, palette: Palette):
+        super().__init__(palette)
+        actions = QHBoxLayout()
+        play = QPushButton("▶ Play all")
+        play.setProperty("accent", True)
+        play.clicked.connect(lambda: self.play_all_requested.emit(list(self._tracks), 0))
+        shuffle = QPushButton("🔀 Shuffle")
+        shuffle.clicked.connect(lambda: self.shuffle_requested_sig.emit(list(self._tracks)))
+        for b in (play, shuffle):
             actions.addWidget(b)
         actions.addStretch(1)
         self.layout().insertLayout(2, actions)
@@ -678,6 +761,8 @@ class MainWindow(QMainWindow):
     """Hearth, grown up: navigation, shelves, lists, and a real transport."""
 
     search_submitted = pyqtSignal(str)
+    search_scoped = pyqtSignal(str, str)          # query, scope
+    album_opened = pyqtSignal(object)             # Album — open its page
     track_picked = pyqtSignal(object)             # single card pick
     playlist_picked = pyqtSignal(list, int)       # play list from index
     play_next_requested = pyqtSignal(object)      # insert at queue head
@@ -685,9 +770,12 @@ class MainWindow(QMainWindow):
     pin_toggled = pyqtSignal(object)              # Track
     queue_remove_requested = pyqtSignal(int)
     queue_reorder_requested = pyqtSignal(list)    # new upcoming order
+    queue_jump_requested = pyqtSignal(int)        # upcoming index to play now
+    queue_clear_requested = pyqtSignal()
     radio_requested = pyqtSignal(object)          # Track | None (None = current)
     rate_cycled = pyqtSignal()
     sleep_requested = pyqtSignal(int)             # minutes; 0 = off
+    mute_toggled = pyqtSignal()
     home_refresh_requested = pyqtSignal()
     library_refresh_requested = pyqtSignal()
     play_pause_requested = pyqtSignal()
@@ -712,10 +800,11 @@ class MainWindow(QMainWindow):
         self.search_view = SearchView(self._palette)
         self.library_view = LibraryView(self._palette)
         self.now_view = NowView(self._palette)
+        self.album_view = AlbumView(self._palette)
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.search_view, self.library_view,
-                     self.now_view):
+                     self.now_view, self.album_view):
             self.stack.addWidget(view)
 
         self.player_bar = PlayerBar(self._palette)
@@ -736,6 +825,7 @@ class MainWindow(QMainWindow):
 
         self.setStyleSheet(build_stylesheet(self._palette))
         self._wire_internal()
+        self._install_shortcuts()
         self.show_view("home")
 
     # --- construction bits ---
@@ -798,6 +888,18 @@ class MainWindow(QMainWindow):
         self.queue_dock.setAllowedAreas(
             Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
         )
+        body = QWidget()
+        body_lay = QVBoxLayout(body)
+        body_lay.setContentsMargins(0, 0, 0, 0)
+        body_lay.setSpacing(2)
+        tools = QHBoxLayout()
+        tools.addStretch(1)
+        clear_btn = QPushButton("Clear")
+        clear_btn.setProperty("flat", True)
+        clear_btn.setToolTip("Remove every upcoming track")
+        clear_btn.clicked.connect(self.queue_clear_requested.emit)
+        tools.addWidget(clear_btn)
+        body_lay.addLayout(tools)
         self._queue_list = QListWidget()
         self._queue_list.setProperty("rows", True)
         self._queue_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -808,25 +910,35 @@ class MainWindow(QMainWindow):
         )
         self._queue_list.setDefaultDropAction(Qt.DropAction.MoveAction)
         self._queue_list.model().rowsMoved.connect(self._on_queue_rows_moved)
-        self.queue_dock.setWidget(self._queue_list)
+        self._queue_list.itemDoubleClicked.connect(
+            lambda item: self._queue_jump_from_row(self._queue_list.row(item))
+        )
+        body_lay.addWidget(self._queue_list, 1)
+        self.queue_dock.setWidget(body)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.queue_dock)
         self.queue_dock.hide()
         self.resizeDocks([self.queue_dock], [config.QUEUE_WIDTH], Qt.Orientation.Horizontal)
 
     def _wire_internal(self) -> None:
-        self.home_view.shelf("Quick picks").card_picked.connect(
-            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
-        )
-        self.home_view.shelf("Pinned favorites").card_picked.connect(
-            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
-        )
-        self.home_view.shelf("Recently played").card_picked.connect(
-            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
-        )
+        for shelf_name in ("Quick picks", "Top tracks", "Pinned favorites",
+                           "Recently played"):
+            self.home_view.shelf(shelf_name).card_picked.connect(
+                lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+            )
         self.search_view.search_submitted.connect(self.search_submitted.emit)
+        self.search_view.search_scoped.connect(self.search_scoped.emit)
+        self.search_view.album_opened.connect(self.album_opened.emit)
         self.search_view.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )
+        self.album_view.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        self.album_view.play_all_requested.connect(self.playlist_picked.emit)
+        self.album_view.shuffle_requested_sig.connect(
+            lambda tracks: self.playlist_picked.emit(list(tracks), 0)
+        )
+        self.album_view.menu_requested.connect(self._track_menu)
         self.library_view.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )
@@ -877,6 +989,56 @@ class MainWindow(QMainWindow):
 
     def set_home_shelf(self, name: str, tracks: list[Track]) -> None:
         self.home_view.set_shelf(name, tracks)
+
+    def set_top_tracks(self, tracks: list[Track]) -> None:
+        self.home_view.set_shelf("Top tracks", list(tracks))
+
+    def show_album_results(self, albums: list[Album]) -> None:
+        self.search_view.set_albums(list(albums))
+
+    def open_album(self, album: Album, tracks: list[Track]) -> None:
+        self.album_view.set_header(f"💿 {album.title}")
+        self.album_view.set_tracks(list(tracks))
+        self.stack.setCurrentWidget(self.album_view)
+        for key, btn in self._nav.items():
+            btn.setChecked(key == "search")   # albums arrive from Search
+
+    # --- keyboard shortcuts (text-field safe) ---
+
+    def _install_shortcuts(self) -> None:
+        """Window keys: guarded so typing in the search box never triggers them."""
+        entry_widgets = (QLineEdit, QTextEdit, QPlainTextEdit)
+
+        def typing() -> bool:
+            return isinstance(QApplication.focusWidget(), entry_widgets)
+
+        def bind(chord: str, handler) -> None:
+            shortcut = QShortcut(QKeySequence(chord), self)
+            shortcut.activated.connect(
+                lambda: None if typing() else handler()
+            )
+
+        bind("Space", self.play_pause_requested.emit)
+        bind("M", self.mute_toggled.emit)
+        bind("S", self.shuffle_requested.emit)
+        bind("R", self.repeat_requested.emit)
+        bind("N", lambda: self.show_view("now"))
+        bind("Q", self.toggle_queue)
+        bind("/", self.focus_search)
+
+        def seek_by(step_ms: int) -> None:
+            self.seek_requested.emit(
+                max(0, self.player_bar._seek.value() + step_ms)
+            )
+
+        def volume_by(step: int) -> None:
+            value = self.player_bar._volume.value() + step
+            self.volume_changed.emit(max(0, min(100, value)) / 100.0)
+
+        bind("Right", lambda: seek_by(config.SEEK_STEP_MS))
+        bind("Left", lambda: seek_by(-config.SEEK_STEP_MS))
+        bind("Up", lambda: volume_by(int(config.VOLUME_STEP * 100)))
+        bind("Down", lambda: volume_by(-int(config.VOLUME_STEP * 100)))
 
     def set_favorites(self, tracks: list[Track]) -> None:
         self.library_view.set_favorites(tracks)
@@ -970,6 +1132,7 @@ class MainWindow(QMainWindow):
         play_next = menu.addAction("▶ Play next")
         enqueue = menu.addAction("➕ Add to queue")
         radio = menu.addAction("📻 Start radio")
+        copy_link = menu.addAction("🔗 Copy YouTube link")
         menu.addSeparator()
         pinned = self.store.is_pinned(track.video_id) if self.store else False
         pin = menu.addAction("♥ Unpin" if pinned else "♡ Pin to favorites")
@@ -995,6 +1158,11 @@ class MainWindow(QMainWindow):
         play_next.triggered.connect(lambda: self.play_next_requested.emit(track))
         enqueue.triggered.connect(lambda: self.enqueue_requested.emit(track))
         radio.triggered.connect(lambda: self.radio_requested.emit(track))
+        copy_link.triggered.connect(
+            lambda: QApplication.clipboard().setText(
+                f"https://www.youtube.com/watch?v={track.video_id}"
+            )
+        )
         pin.triggered.connect(lambda: self.pin_toggled.emit(track))
         playlists_menu.triggered.connect(
             lambda act: _add_to(int(act.data()) if act.data() is not None else -1)
@@ -1084,12 +1252,53 @@ class MainWindow(QMainWindow):
         item = self._queue_list.itemAt(pos)
         if item is None:
             return
-        index = self._queue_list.row(item)
+        row = self._queue_list.row(item)
+        kind = item.data(Qt.ItemDataRole.UserRole + 1)
         menu = QMenu(self)
-        remove = menu.addAction("✕ Remove from queue")
+        play_now = None
+        move_up = None
+        move_down = None
+        if kind == "upcoming":
+            play_now = menu.addAction("▶ Play now")
+            move_up = menu.addAction("↑ Move up")
+            move_down = menu.addAction("↓ Move down")
+            menu.addSeparator()
+            remove = menu.addAction("✕ Remove from queue")
+        else:
+            remove = menu.addAction("✕ Remove from queue")
+            remove.setEnabled(False)   # the playing row isn't in `upcoming`
         chosen = menu.exec(self._queue_list.viewport().mapToGlobal(pos))
-        if chosen is remove:
-            self.queue_remove_requested.emit(index)
+        if chosen is None:
+            return
+        if chosen is play_now:
+            self.queue_jump_requested.emit(row - 1)   # upcoming index
+        elif chosen is move_up:
+            self._queue_swap(row - 1, row - 2)
+        elif chosen is move_down:
+            self._queue_swap(row - 1, row)
+        elif chosen is remove and kind == "upcoming":
+            self.queue_remove_requested.emit(row - 1)
+
+    def _queue_jump_from_row(self, row: int) -> None:
+        item = self._queue_list.item(row) if row >= 0 else None
+        if item is None or item.data(Qt.ItemDataRole.UserRole + 1) != "upcoming":
+            return
+        self.queue_jump_requested.emit(row - 1)
+
+    def _queue_swap(self, i: int, j: int) -> None:
+        """Swap upcoming positions via the reorder signal (engine owns truth)."""
+        item_i = self._queue_list.item(i + 1)
+        item_j = self._queue_list.item(j + 1)
+        if item_i is None or item_j is None:
+            return
+        order = []
+        for row in range(1, self._queue_list.count()):
+            track = self._queue_list.item(row).data(Qt.ItemDataRole.UserRole)
+            if track is not None:
+                order.append(track)
+        if 0 <= i < len(order) and 0 <= j < len(order):
+            order[i], order[j] = order[j], order[i]
+            self.queue_reorder_requested.emit(order)
 
     # --- queue dock ---
 

@@ -7,6 +7,21 @@ from dataclasses import asdict, dataclass, fields
 
 
 @dataclass
+class Album:
+    """An album container from the catalogue — opened, not directly playable."""
+
+    browse_id: str
+    title: str
+    artist: str = ""
+    year: str = ""
+    thumbnail: str = ""
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.artist} — {self.title}" if self.artist else self.title
+
+
+@dataclass
 class Track:
     """A playable song in the Hearth universe."""
 

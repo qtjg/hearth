@@ -63,12 +63,10 @@ MAX_GAIN_DB = 6.0
 MIN_GAIN_DB = -6.0
 PLAYBACK_RATES = (0.75, 1.0, 1.25, 1.5)
 
-# --- v0.4.0: radio, lyrics, shortcuts, backup ---
-RADIO_SIZE = 25              # tracks fetched for "Start radio" / autoplay
+# --- v0.5.0: search scopes, top tracks, shortcuts ---
 SEEK_STEP_MS = 10_000        # ←/→ keyboard seek step
 VOLUME_STEP = 0.05           # ↑/↓ keyboard volume step
 TOP_TRACKS_LIMIT = 8         # home shelf ranking size
-LYRICS_SOURCE_LABEL = "source"  # ytmusicapi lyrics dict key kept out of the pane
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"
