@@ -22,6 +22,25 @@ TOAST_WIDTH = 300
 TOAST_HEIGHT = 68
 TOAST_LIFETIME_MS = 3500
 
+# --- main window (the big stage) ---
+WINDOW_WIDTH = 1200
+WINDOW_HEIGHT = 780
+SIDEBAR_WIDTH = 232
+PLAYERBAR_HEIGHT = 88
+QUEUE_WIDTH = 300
+COVER_TILE = 168
+ROW_HEIGHT = 52
+
+# Home shelves are seeded from these guest-API searches (fast, no login).
+QUICK_PICKS = (
+    "today's top hits",
+    "chill lofi beats",
+    "classic rock anthems",
+    "focus flow",
+    "late night drive",
+    "acoustic mornings",
+)
+
 # --- timing tunables ---
 SEARCH_DEBOUNCE_MS = 350
 SEEK_POLL_MS = 500
@@ -126,9 +145,16 @@ PALETTES: dict[str, Palette] = {
         accent="#5fd4c4", accent_soft="#9ae8dc", danger="#e2694f",
         success="#7fd0a0", selection="#1d3c38", scroll="#2e383a",
     ),
+    "grove": Palette(
+        key="grove", label="Grove",
+        bg="#0e1210", surface="#131917", surface_alt="#1a2420",
+        hairline="#223029", text="#e8f5ee", text_dim="#93a89d",
+        accent="#1db954", accent_soft="#52e08a", danger="#e2694f",
+        success="#7fd0a0", selection="#14422a", scroll="#223029",
+    ),
 }
 
-DEFAULT_PALETTE = "hearthlight"
+DEFAULT_PALETTE = "grove"
 
 
 def get_palette(key: str | None) -> Palette:

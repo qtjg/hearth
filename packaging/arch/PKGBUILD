@@ -3,9 +3,9 @@
 # Build: makepkg -si   (installs system-wide using Arch's Python stack)
 
 pkgname=hearth-player
-pkgver=0.2.0
+pkgver=0.3.0
 pkgrel=1
-pkgdesc="A cozy floating YouTube Music companion for your desktop"
+pkgdesc="A cozy three-pane YouTube Music player for your desktop"
 arch=('any')
 url="https://github.com/qtjg/hearth"
 license=('MIT')

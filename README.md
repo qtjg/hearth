@@ -2,9 +2,9 @@
 
 # 🔥 Hearth
 
-**A cozy floating music companion for every desktop — Arch Linux, Windows, and macOS.**
+**A full three-pane desktop music player for YouTube Music — Arch Linux, Windows, and macOS.**
 
-*Warm as a fireside · Light as a ribbon · Runs where you run*
+*Sidebar navigation · Home shelves · Playlists · Bottom transport bar · Runs where you run*
 
 <br/>
 
@@ -15,22 +15,47 @@
 
 ---
 
+## 🖼️ The Big Window (v0.3)
+
+Hearth grew from a floating ribbon into a complete desktop music app, laid out
+the way every major streaming client works — three panes, one window:
+
+- **Left sidebar** — Home, Search, and Your Library navigation, plus all of
+  your playlists with one-click creation.
+- **Home** — horizontally scrolling shelves: Quick Picks seeded from guest-API
+  searches, your Pinned favorites, and Recently played, all as big cover cards.
+- **Search** — a prominent query box (debounced, link-aware) over clean result
+  rows with mini covers, artist, and duration.
+- **Your Library** — pinned favorites, recent history, and playlist cards.
+- **Playlists** — create, rename, delete; add any track via its context menu
+  (▶ Play next · ➕ Add to queue · ♡ Pin · 📌 Add to playlist); Play-all and
+  Shuffle buttons on every playlist page.
+- **Bottom player bar** — cover tile, ♡ pin, shuffle / repeat, prev / play /
+  next, draggable seek with time labels, queue drawer, and a volume slider.
+- **Queue drawer** — dockable "Up next" panel; right-click any row to remove it.
+
+Love the old vibe? The original floating ribbon is still there: run
+`./launch.sh --ribbon` (or `python -m hearth --ribbon`) for the compact
+always-on-top companion. Legacy and new share the same engine.
+
 ## ✨ What It Does
 
 | Feature | The Vibe |
 |:---|:---|
-| 🔍 **Search or paste** | Type a song name or drop a YouTube / YT Music link straight into the field — debounced, retried, instant |
-| 🪟 **Ribbon → panel** | A thin, discreet desk ribbon that blooms into an expanded player when you want to dig into the queue |
-| ⌨️ **Always on top** | Floats cleanly over IDEs, browsers, and terminals — pure Qt, zero platform-specific hacks |
+| 🖼️ **Three-pane main window** | Sidebar + home shelves + library views + bottom transport — the full desktop-player experience |
+| 🎵 **Playlists that stick** | Create, rename, delete, reorder-safe add/remove — stored in the SQLite database you own |
+| 📋 **Queue drawer** | See and prune what's coming; Play-next jumps the line, Add-to-queue appends |
+| 🔍 **Search or paste** | Type a song name or drop a YouTube / YT Music link — debounced, retried, instant |
+| 🪟 **Ribbon companion** | The classic floating always-on-top mini player still ships (`--ribbon`) for IDE-side listening |
 | 🔀 **Shuffle & repeat** | Non-destructive upcoming-queue shuffle plus cycleable repeat (off / all / one), persisted across reboots |
 | ⚡ **Speed control** | Cycle 0.75x → 1.0x → 1.25x → 1.5x via native `QMediaPlayer.setPlaybackRate()` |
 | ⏾ **Sleep timer** | 15–60 minute presets with a gentle exponential volume fade-out before pausing |
 | 🔊 **Loudness normalization** | Stream loudness is nudged toward a target so quiet/blast tracks stop yo-yoing the volume knob |
-| 🎨 **Six live themes** | Hearthlight, Emberfall, Frost, Moss, Orchid, and Slate re-skin the whole player in real time |
-| ♥ **Favorites & history** | Pin tracks and revisit your listening history — stored in a local SQLite database you own |
-| 🖥️ **Tray presence** | Play, pause, skip, or summon from the system tray; a second launch just wakes the first |
+| 🎨 **Seven live themes** | Grove (the new default), Hearthlight, Emberfall, Frost, Moss, Orchid, and Slate re-skin everything in real time |
+| ♥ **Favorites & history** | Pin tracks and revisit your listening history — local SQLite, no account, no telemetry |
+| 🖥️ **Tray presence** | Play, pause, skip, or summon the window from the system tray; a second launch just wakes the first |
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
-| 💾 **Remembers everything** | Window position, volume, theme, repeat mode, speed, favorites, and history persist across reboots |
+| 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, favorites, playlists, and history persist |
 
 ---
 
@@ -96,7 +121,7 @@ Both use an isolated `.venv` — your system Python stays untouched.
 | `Ctrl` + `Alt` + `Space` | Play / pause |
 | `Ctrl` + `Alt` + `→` | Next track |
 | `Ctrl` + `Alt` + `←` | Previous track |
-| `Ctrl` + `Alt` + `E` | Toggle expanded panel |
+| `Ctrl` + `Alt` + `E` | Toggle the window / ribbon |
 | `Ctrl` + `Alt` + `F` | Focus search |
 
 Bindings are merged from user overrides on top of the defaults and validated by
@@ -137,18 +162,20 @@ hearth/
 │   ├── app.py          → lifecycle, persistence, hotkeys, logging
 │   ├── catalog.py      → YT Music guest search, link parsing, retry backoff
 │   ├── config.py       → palettes, tunables, hotkey defaults (single source of truth)
+│   ├── cover.py        → cover tiles: painted flame fallback + async album art
 │   ├── hotkeys.py      → conflict detection & override merging
 │   ├── jobs.py         → QRunnable search/load workers on isolated pools
 │   ├── models.py       → Track dataclass & serialization
-│   ├── panel.py        → the floating ribbon, spring-physics EQ bars, UI
+│   ├── panel.py        → the floating ribbon (legacy companion UI)
 │   ├── player.py       → queue engine (pure) + lazy Qt Multimedia backend
-│   ├── storage.py      → SQLite favorites & playback history
+│   ├── storage.py      → SQLite favorites, history & playlists
 │   ├── stream.py       → yt-dlp resolver, format picker, loudness gain
 │   ├── theme.py        → stylesheets compiled from Palette tokens
 │   ├── toast.py        → non-focus-stealing now-playing toast
 │   ├── tray.py         → tray presence, painted icon, single-instance guard
+│   ├── window.py       → the three-pane main window (sidebar/shelves/transport)
 │   └── utils.py        → small zero-dependency helpers
-├── tests/              → 60+ headless tests (offscreen Qt platform)
+├── tests/              → 99 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -159,8 +186,9 @@ hearth/
 
 ## 🧪 Testing
 
-60+ tests cover models, palettes, storage, retry backoff, format picking,
-queue semantics, hotkey conflicts, and the real UI booting headless:
+99 tests cover models, palettes, playlists, storage, retry backoff, format
+picking, queue semantics, hotkey conflicts, the main window (views, player
+bar, queue dock, pin flow), and the real app booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -176,7 +204,7 @@ not just claimed.
 
 - ♾️ Endless radio queue from the recommendation graph
 - 🎤 Live lyrics tab
-- ♥ Favorites tab in the expanded panel
+- 🖼️ Drag-and-drop playlist reordering
 - 📦 AUR package publication
 
 ---
