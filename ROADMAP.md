@@ -4,7 +4,7 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-14**, right after v0.6.1 (artist spotlight + synced lyrics).
+> Last stoked: **2026-09-14**, right after v0.6.2 (Glass & Motion — the 2020s visual pass).
 
 ---
 
@@ -16,6 +16,7 @@
 | v0.5.0 | The library | search scopes, album pages, top tracks, shortcuts |
 | v0.6.0 | The wide world | Discover (charts / moods / ~280 playlists) + World Explorer (74 genre stations) |
 | v0.6.1 | The spotlight | **artist pages** (face, top tracks, releases, kindred acts) + **synced lyrics** (LRCLIB, glowing line, click-to-seek) |
+| v0.6.2 | Glass & Motion | gradients, glass surfaces, shadows & accent glows, 3D rounded covers + floor reflection, view crossfades, glossy EQ bars |
 
 254 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.

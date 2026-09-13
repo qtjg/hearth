@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPainter, QColor, QMouseEvent, QPainterPath
+from PyQt6.QtGui import QColor, QLinearGradient, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QPushButton, QSlider, QVBoxLayout, QWidget,
@@ -13,6 +13,7 @@ from . import config
 from .config import Palette, get_palette
 from .models import Track
 from .theme import build_stylesheet
+from .utils import mix
 
 
 class SpringPhysics:
@@ -77,9 +78,26 @@ class EqBars(QWidget):
         for i, value in enumerate(self._physics.pos):
             h = max(3, int(value * self.height()))
             x = int(i * width + width * 0.22)
+            bw = width * 0.56
+            r = bw / 2.0
+            hot = self._palette.accent if i % 2 == 0 else self._palette.accent_soft
+
+            # halo: the bar glowing onto the surface behind it
+            halo = QColor(hot)
+            halo.setAlpha(56)
+            glow = QPainterPath()
+            glow.addRoundedRect(x - 2.5, self.height() - h - 2.5,
+                                bw + 5.0, h + 5.0, r + 2.5, r + 2.5)
+            painter.fillPath(glow, halo)
+
+            # glossy bar: bright cap fading toward a deep base
+            bar = QLinearGradient(0.0, float(self.height() - h), 0.0,
+                                  float(self.height()))
+            bar.setColorAt(0.0, QColor(hot))
+            bar.setColorAt(1.0, QColor(mix(hot, "#000000", 0.35)))
             path = QPainterPath()
-            path.addRoundedRect(x, self.height() - h, int(width * 0.56), h, 2, 2)
-            painter.fillPath(path, QColor(self._palette.accent if i % 2 == 0 else self._palette.accent_soft))
+            path.addRoundedRect(x, self.height() - h, bw, h, r, r)
+            painter.fillPath(path, bar)
         painter.end()
 
 
@@ -120,6 +138,7 @@ class FloatingPanel(QWidget):
 
         # Compact ribbon
         self._ribbon = QWidget()
+        self._ribbon.setProperty("ribbon", True)
         rib = QHBoxLayout(self._ribbon)
         rib.setContentsMargins(14, 10, 14, 10)
         rib.setSpacing(8)
@@ -149,6 +168,7 @@ class FloatingPanel(QWidget):
 
         # Expanded panel
         self._body = QWidget()
+        self._body.setProperty("glass", True)
         body = QVBoxLayout(self._body)
         body.setContentsMargins(14, 14, 14, 14)
         body.setSpacing(10)

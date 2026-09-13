@@ -79,7 +79,7 @@ LRCLIB_TIMEOUT = 10                      # seconds per lyrics request
 ARTIST_AVATAR = 132                      # artist page avatar size
 ARTIST_CARD_SIZE = 132                   # release card size on the artist page
 
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

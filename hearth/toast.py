@@ -1,15 +1,22 @@
-"""Non-focus-stealing desktop toast for "now playing" moments."""
+"""Non-focus-stealing desktop toast for "now playing" moments.
+
+The 2020s pass: a translucent glass card that rises into place while
+fading in, then whispers away — painted rounded shell, light edge on
+top, no native window chrome anywhere in sight.
+"""
 
 from __future__ import annotations
 
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import QRectF, Qt, QTimer
+from PyQt6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath
 from PyQt6.QtWidgets import QApplication, QLabel, QVBoxLayout, QWidget
 
 from . import config
+from .config import get_palette
+from .effects import slide_toast
 from .models import Track
 from .theme import build_stylesheet
-from .config import get_palette
+from .utils import mix
 
 
 class NowPlayingToast(QWidget):
@@ -22,11 +29,13 @@ class NowPlayingToast(QWidget):
             | Qt.WindowType.Tool
             | Qt.WindowType.WindowStaysOnTopHint
         )
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setFixedSize(config.TOAST_WIDTH, config.TOAST_HEIGHT)
-        self.setStyleSheet(build_stylesheet(get_palette(palette_key)))
+        self._palette = get_palette(palette_key)
+        self.setStyleSheet(build_stylesheet(self._palette))
 
+        # room for the painted card inset from the translucent window
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 10, 14, 10)
         self._title = QLabel("🔥 Hearth")
@@ -44,12 +53,41 @@ class NowPlayingToast(QWidget):
         self._fade.timeout.connect(self._fade_tick)
         self._opacity = 1.0
 
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """The glass card: rounded shell, lit-from-above gradient, bright rim."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        card = QRectF(self.rect().adjusted(4, 4, -4, -4))
+        radius = 14.0
+
+        shell = QLinearGradient(0.0, float(card.top()), 0.0,
+                                float(card.bottom()))
+        shell.setColorAt(0.0, QColor(mix(self._palette.surface_alt,
+                                         self._palette.text, 0.05)))
+        shell.setColorAt(1.0, QColor(self._palette.surface))
+        path = QPainterPath()
+        path.addRoundedRect(card, radius, radius)
+        painter.fillPath(path, shell)
+
+        rim = QLinearGradient(0.0, float(card.top()), 0.0,
+                              float(card.bottom()))
+        rim.setColorAt(0.0, QColor(255, 255, 255, 60))
+        rim.setColorAt(0.5, QColor(255, 255, 255, 12))
+        rim.setColorAt(1.0, QColor(0, 0, 0, 70))
+        pen = painter.pen()
+        pen.setWidthF(1.2)
+        pen.setBrush(rim)
+        painter.setPen(pen)
+        painter.drawPath(path)
+        painter.end()
+
     def announce(self, track: Track) -> None:
         self._sub.setText(f"▶ {track.display_name}")
         self.reposition()
         self.setWindowOpacity(1.0)
         self._opacity = 1.0
         self.show()
+        slide_toast(self, ms=320)   # rise + fade into place
         self._timer.start(config.TOAST_LIFETIME_MS)
 
     def reposition(self) -> None:

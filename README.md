@@ -8,7 +8,7 @@
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
 ![tests](https://img.shields.io/badge/tests-254%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.6.1-ff7a18?style=flat-square)
+![version](https://img.shields.io/badge/version-v0.6.2-ff7a18?style=flat-square)
 ![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
@@ -24,7 +24,7 @@
 <details open>
 <summary><strong>📑 Jump around</strong> — the whole README, indexed</summary>
 
-[🧊 The System, in 3D](#-the-system-in-3d) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
+[🧊 The System, in 3D](#-the-system-in-3d) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🪞 Glass & Motion v0.6.2](#-glass--motion--the-2020s-pass-v062) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
 
 </details>
 
@@ -278,6 +278,35 @@ flowchart TD
     C -->|miss| E["🕯️ as close to impossible as a player can get"]
 ```
 
+## 🪞 Glass & Motion — the 2020s Pass (v0.6.2)
+
+Same cozy hearth, new physics. Every flat fill from the last decade got
+an upgrade to the current one — depth, light, and motion, all painted by
+pure Qt (no new dependencies, no engine swap):
+
+- **🪟 Glass surfaces** — the window, player bar, sidebar, ribbon and
+  cards now sit on vertical light-to-dark gradients with a bright rim
+  catching the light on top edges; menus, tooltips and the toast wear
+  the same rounded glass
+- **🫧 Real shadows & glows** — the big Now Playing cover floats on an
+  accent halo, the transport's play button glows in the theme color,
+  the bar cover casts a soft ground shadow — and every glow recolors
+  itself when you swap palettes
+- **🪩 3D covers** — album art lands in rounded, beveled frames with a
+  glass sheen; the painted flame mark gets a lit-from-above shell and an
+  accent bloom behind the glyph; the Now stage mirrors its cover in a
+  fading floor reflection
+- **🎞️ Motion everywhere** — views crossfade as you navigate, the toast
+  rises into place while fading in, the equalizer bars turned glossy
+  (bright cap → deep base, each glowing onto the surface behind it)
+- **🎛️ Modern controls** — gradient accent buttons, pill chips, nav
+  items with an accent edge, sliders with white-ring handles and a
+  gradient fill, softer scrollbars, a modern type stack
+
+All of it derives from the same seven palettes at compile time — pick
+**Frost**, **Orchid**, **Grove** or any other theme and the whole 2020s
+layer recolors with it.
+
 ## 🧭 How Hearth Grew
 
 Five ships, five waves — each one a full layer of the app:
@@ -288,7 +317,8 @@ Five ships, five waves — each one a full layer of the app:
 | v0.4 | 📻 Radio & Words | Now Playing page, Start Radio, endless autoplay, library backup |
 | v0.5 | 🔍 Scopes & Shortcuts | search scopes, album pages, top tracks, in-window hotkeys |
 | v0.6 | 🌍 Discover + 🗺️ World Explorer | the whole YT Music catalogue + a 74-station world dial |
-| **v0.6.1** | 🎤 Spotlight | artist pages, synced lyrics, banner art — **current release** |
+| v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
+| **v0.6.2** | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades — **current release** |
 
 **New here? A 60-second tour of the new stuff:** open 🧭 **Discover** and tap
 a mood → hop to 🗺️ **World** and hit **🎲 Surprise me** → right-click any
@@ -459,8 +489,8 @@ not just claimed.
 ## 🗺️ Roadmap
 
 The living plan — waves, acceptance criteria, and the wish pool — lives in
-**[ROADMAP.md](ROADMAP.md)**. Artist pages and synced lyrics just shipped in
-v0.6.1; the headline of what burns next:
+**[ROADMAP.md](ROADMAP.md)**. Glass & Motion just shipped in v0.6.2; the
+headline of what burns next:
 
 - 🔥 **v0.7.0 — Memory & Rituals**: listen history shelves, "On Repeat"
   smart playlist, the Glow Mix, queue persistence, Discord Rich Presence

@@ -39,7 +39,13 @@ from PyQt6.QtWidgets import (
 
 from . import config, share, world
 from .config import Palette, get_palette
-from .cover import CoverTile
+from .cover import CoverTile, reflected_pixmap
+from .effects import (
+    add_glow,
+    add_shadow,
+    fade_in,
+    set_glow_color,
+)
 from .lyrics import LrcLine, SyncedLyrics
 from .models import Album, Artist, Track
 from .storage import HearthStore
@@ -1135,6 +1141,12 @@ class NowView(QWidget):
         left = QVBoxLayout()
         left.setSpacing(10)
         self._cover = CoverTile(palette, config.NOW_COVER)
+        self._cover_glow = add_glow(self._cover, palette.accent, blur=54,
+                                    alpha=120)
+        self._reflection = QLabel()
+        self._reflection.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._reflection.setFixedHeight(round(config.NOW_COVER * 0.4))
+        self._cover.art_changed.connect(self._set_reflection)
         ident = QHBoxLayout()
         ident.setSpacing(8)
         text = QVBoxLayout()
@@ -1155,6 +1167,7 @@ class NowView(QWidget):
         ident.addLayout(text, 1)
         ident.addWidget(self._pin)
         left.addWidget(self._cover, 0, Qt.AlignmentFlag.AlignHCenter)
+        left.addWidget(self._reflection)
         left.addLayout(ident)
         left.addStretch(1)
 
@@ -1173,6 +1186,14 @@ class NowView(QWidget):
 
     # --- state in ---
 
+    def _set_reflection(self, pixmap) -> None:
+        """Mirror the current cover in a fading floor reflection."""
+        base = self._cover.pixmap()
+        if base is None or base.isNull():
+            self._reflection.clear()
+            return
+        self._reflection.setPixmap(reflected_pixmap(base, depth_frac=0.3))
+
     def set_track(self, track: Track | None) -> None:
         self._track = track
         if track is None:
@@ -1182,6 +1203,7 @@ class NowView(QWidget):
             self._pin.setText("♡")
             self._cover.set_mark()
             self._lyrics.show_message("")
+            self._reflection.clear()
             return
         self._video_id = track.video_id
         self._title.setText(track.title)
@@ -1215,6 +1237,7 @@ class NowView(QWidget):
         self._palette = palette
         self._cover.apply_palette(palette)
         self._lyrics.apply_palette(palette)
+        set_glow_color(self._cover_glow, palette.accent, alpha=120)
 
     @property
     def current_track(self) -> Track | None:
@@ -1246,7 +1269,8 @@ class PlayerBar(QWidget):
         self._track: Track | None = None
         self._pinned = False
         self.setFixedHeight(config.PLAYERBAR_HEIGHT)
-        self.setAutoFillBackground(True)
+        self.setProperty("playerbar", True)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(16, 10, 16, 10)
@@ -1254,6 +1278,7 @@ class PlayerBar(QWidget):
 
         # left: cover + identity + pin
         self._cover = CoverTile(palette, 56)
+        add_shadow(self._cover, blur=18, dy=3, alpha=150)
         self._title = QLabel("Nothing playing")
         self._title.setProperty("header", True)
         self._artist = QLabel("pick something from the shelves")
@@ -1273,6 +1298,8 @@ class PlayerBar(QWidget):
         self._btn_prev = QPushButton("⏮")
         self._btn_play = QPushButton("▶")
         self._btn_play.setProperty("accent", True)
+        self._play_glow = add_glow(self._btn_play, palette.accent, blur=28,
+                                   alpha=95)
         self._btn_next = QPushButton("⏭")
         self._btn_repeat = QPushButton("🔁")
         self._btn_shuffle.setProperty("flat", True)
@@ -1410,6 +1437,10 @@ class PlayerBar(QWidget):
     def set_sleep_label(self, minutes: int | None) -> None:
         self._btn_sleep.setText(f"⏾ {minutes}" if minutes else "⏾")
 
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        set_glow_color(self._play_glow, palette.accent, alpha=95)
+
     @property
     def current_track(self) -> Track | None:
         return self._track
@@ -1506,6 +1537,8 @@ class MainWindow(QMainWindow):
 
     def _build_sidebar(self) -> QWidget:
         side = QWidget()
+        side.setProperty("sidebar", True)
+        side.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         side.setFixedWidth(config.SIDEBAR_WIDTH)
         lay = QVBoxLayout(side)
         lay.setContentsMargins(14, 18, 14, 14)
@@ -1513,6 +1546,9 @@ class MainWindow(QMainWindow):
         wordmark = QLabel("🔥 Hearth")
         wordmark.setProperty("hero", True)
         lay.addWidget(wordmark)
+        tagline = QLabel(config.APP_TAGLINE)
+        tagline.setProperty("kicker", True)
+        lay.addWidget(tagline)
         lay.addSpacing(10)
 
         self._nav: dict[str, QPushButton] = {}
@@ -1681,6 +1717,9 @@ class MainWindow(QMainWindow):
             return
         index = self.VIEWS.index(name)
         self.stack.setCurrentIndex(index)
+        current = self.stack.currentWidget()
+        if current is not None:
+            fade_in(current, ms=200)   # the stage crossfades in
         for key, btn in self._nav.items():
             btn.setChecked(key == name)
         if name == "home":
@@ -2108,6 +2147,7 @@ class MainWindow(QMainWindow):
     def apply_palette(self, palette: Palette) -> None:
         self._palette = palette
         self.now_view.apply_palette(palette)
+        self.player_bar.apply_palette(palette)
         self.setStyleSheet(build_stylesheet(palette))
 
     def summon(self) -> None:

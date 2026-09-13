@@ -1,12 +1,18 @@
 """Smoke tests: the real UI builds and repaints headless (offscreen)."""
 
 import pytest
+from PyQt6.QtCore import QEventLoop, QTimer
+from PyQt6.QtGui import QColor, QPixmap
+from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QLabel
 
-from hearth.config import get_palette
+from hearth.config import PALETTES, get_palette
+from hearth.cover import CoverTile, paint_mark, reflected_pixmap, rounded_pixmap
+from hearth.effects import add_glow, fade_in
 from hearth.panel import EqBars, FloatingPanel, SpringPhysics
 from hearth.theme import build_stylesheet
 from hearth.toast import NowPlayingToast
 from hearth.tray import InstanceGuard, hearth_mark, paint_icon
+from hearth.utils import mix
 
 from .test_models import make_track
 
@@ -15,6 +21,20 @@ def test_stylesheet_has_every_token():
     sheet = build_stylesheet(get_palette("hearthlight"))
     assert "#f0a437" in sheet   # accent lands in the compiled CSS
     assert "$" not in sheet     # strict substitution: no token left behind
+
+
+def test_stylesheet_compiles_for_every_palette():
+    # the 2020s layer derives extra tones per palette; none may leak a token
+    for key in PALETTES:
+        sheet = build_stylesheet(get_palette(key))
+        assert "$" not in sheet
+        assert "qlineargradient" in sheet   # depth is the point
+
+
+def test_mix_blends_toward_target():
+    assert mix("#000000", "#ffffff", 0.0) == "#000000"
+    assert mix("#000000", "#ffffff", 1.0) == "#ffffff"
+    assert mix("#000000", "#ffffff", 0.5) == "#808080"
 
 
 def test_spring_physics_stays_clamped():
@@ -110,3 +130,97 @@ def test_instance_guard_property(qapp, tmp_path):
     assert isinstance(guard.is_primary, bool)
     if guard.server is not None:
         guard.server.close()
+
+
+# ------------------------------------------------- 2020s depth & motion
+
+def _pump(qapp, ms: int) -> None:
+    """Let pending animations/timers run for a wall-clock stretch."""
+    loop = QEventLoop()
+    QTimer.singleShot(ms, loop.quit)
+    loop.exec()
+
+
+def test_paint_mark_is_a_rounded_glossy_tile(qapp):
+    mark = paint_mark(get_palette("grove"), 168)
+    assert not mark.isNull()
+    assert mark.size().width() == 168 and mark.size().height() == 168
+    # corners are clipped by the rounded shell (transparent), center is not
+    assert QColor(mark.toImage().pixelColor(0, 0)).alpha() == 0
+    assert QColor(mark.toImage().pixelColor(84, 84)).alpha() > 0
+
+
+def test_rounded_pixmap_clips_corners(qapp):
+    plain = QPixmap(64, 64)
+    plain.fill(QColor("#123456"))
+    clipped = rounded_pixmap(plain, 16)
+    assert clipped.size() == plain.size()
+    assert QColor(clipped.toImage().pixelColor(0, 0)).alpha() == 0
+    assert QColor(clipped.toImage().pixelColor(32, 32)).alpha() == 255
+
+
+def test_reflected_pixmap_adds_fading_floor(qapp):
+    art = QPixmap(80, 80)
+    art.fill(QColor("#ff8800"))
+    mirrored = reflected_pixmap(art, depth_frac=0.3)
+    # taller than the source: original + gap + reflection strip
+    assert mirrored.height() > art.height()
+    assert mirrored.width() == art.width()
+    # the reflection fades to nothing at its bottom edge
+    bottom = QColor(mirrored.toImage().pixelColor(40, mirrored.height() - 1))
+    assert bottom.alpha() < 40
+
+
+def test_glow_attaches_and_fade_settles(qapp):
+    halo = QLabel("halo me")
+    effect = add_glow(halo, "#1db954", blur=24)
+    assert isinstance(effect, QGraphicsDropShadowEffect)
+    assert halo.graphicsEffect() is effect
+    # a widget with its own effect keeps it — the fade politely skips
+    fade_in(halo, ms=60)
+    assert halo.graphicsEffect() is effect
+    # a plain widget fades and settles at full opacity (effect stays
+    # attached by design — persistent animation, no teardown races)
+    plain = QLabel("fade me")
+    fade_in(plain, ms=60)
+    _pump(qapp, 300)
+    settled = plain.graphicsEffect()
+    assert isinstance(settled, QGraphicsOpacityEffect)
+    assert settled.opacity() == pytest.approx(1.0)
+    fade_in(plain, ms=60)   # restart on a settled widget is always safe
+    _pump(qapp, 300)
+    assert plain.graphicsEffect().opacity() == pytest.approx(1.0)
+
+
+def test_cover_tile_frames_art_and_announces(qapp):
+    tile = CoverTile(get_palette("grove"), 96)
+    seen = []
+    tile.art_changed.connect(seen.append)   # constructor swap already happened
+    tile.set_mark()   # repaints the mark → art_changed fires
+    assert len(seen) == 1
+    assert not tile.pixmap().isNull()
+    # art lands in a rounded frame: corner transparent, heart opaque
+    img = tile.pixmap().toImage()
+    assert QColor(img.pixelColor(0, 0)).alpha() == 0
+    assert QColor(img.pixelColor(48, 48)).alpha() > 0
+
+
+def test_now_view_mirrors_cover_in_reflection(qapp):
+    from hearth.window import NowView
+
+    view = NowView(get_palette("grove"))
+    view.set_track(make_track(thumbnail=""))   # painted mark: synchronous
+    shown = view._reflection.pixmap()
+    assert shown is not None and not shown.isNull()
+    view.set_track(None)
+    gone = view._reflection.pixmap()
+    assert gone is None or gone.isNull()   # clear stage, clear floor
+
+
+def test_eqbars_glossy_paint(qapp):
+    eq = EqBars(get_palette("orchid"))
+    eq.set_active(True)
+    eq._physics.step(0.04)   # give the bars something to paint
+    grabbed = eq.grab()
+    assert not grabbed.isNull()
+    eq.set_active(False)

@@ -37,3 +37,13 @@ def pretty_count(value: int, singular: str, plural: str = "") -> str:
 def clamp(value: int, low: int, high: int) -> int:
     """Clamp an int into [low, high]."""
     return max(low, min(high, int(value)))
+
+
+def mix(a: str, b: str, t: float) -> str:
+    """Blend two #rrggbb colors; t=0.0 gives a, t=1.0 gives b."""
+    ar, ag, ab = int(a[1:3], 16), int(a[3:5], 16), int(a[5:7], 16)
+    br, bg, bb = int(b[1:3], 16), int(b[3:5], 16), int(b[5:7], 16)
+    r = round(ar + (br - ar) * t)
+    g = round(ag + (bg - ag) * t)
+    bl = round(ab + (bb - ab) * t)
+    return f"#{r:02x}{g:02x}{bl:02x}"
