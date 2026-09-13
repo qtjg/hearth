@@ -91,6 +91,51 @@ class Catalog:
                 sleep(base_delay * (2 ** attempt))
         return None
 
+    def lyrics(
+        self,
+        video_id: str,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> str | None:
+        """Lyrics text for a track. None when unavailable (never raises)."""
+        for attempt in range(attempts):
+            try:
+                data = self._get_client(client_factory).get_lyrics(video_id)
+                text = (data or {}).get("lyrics") or ""
+                return text.strip() or None
+            except Exception as exc:  # noqa: BLE001 - network layer must not crash UI
+                if attempt == attempts - 1:
+                    log.info("lyrics(%s) unavailable: %s", video_id, exc)
+                    return None
+                sleep(base_delay * (2 ** attempt))
+        return None
+
+    def radio(
+        self,
+        video_id: str,
+        limit: int = 25,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+    ) -> list[Track]:
+        """Endless-radio seed: tracks related to `video_id`. [] on failure."""
+        for attempt in range(attempts):
+            try:
+                data = self._get_client(client_factory).get_watch_playlist(
+                    videoId=video_id, radio=True, limit=limit
+                )
+                return self._map_results((data or {}).get("tracks") or [])
+            except Exception as exc:  # noqa: BLE001
+                if attempt == attempts - 1:
+                    log.warning("radio(%s) failed after %d attempts: %s",
+                                video_id, attempts, exc)
+                    return []
+                sleep(base_delay * (2 ** attempt))
+        return []
+
     @staticmethod
     def _map_results(results: list[dict]) -> list[Track]:
         tracks: list[Track] = []
@@ -98,13 +143,14 @@ class Catalog:
             if not item.get("videoId"):
                 continue
             artists = ", ".join(a.get("name", "") for a in item.get("artists") or [])
+            seconds = _duration_to_sec(item.get("duration_seconds")) or _duration_to_sec(item.get("lengthSeconds"))
             tracks.append(
                 Track(
                     video_id=item["videoId"],
                     title=item.get("title", "Unknown"),
                     artist=artists or "Unknown artist",
-                    duration=item.get("duration") or "",
-                    duration_sec=_duration_to_sec(item.get("duration_seconds")),
+                    duration=item.get("duration") or _seconds_to_clock(seconds),
+                    duration_sec=seconds,
                     thumbnail=(item.get("thumbnails") or [{}])[-1].get("url", ""),
                     playlist_id=item.get("album", {}).get("id", "") if isinstance(item.get("album"), dict) else "",
                 )

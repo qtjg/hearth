@@ -102,6 +102,14 @@ QScrollBar::handle:horizontal { background: $scroll; border-radius: 3px; min-wid
 QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal { width: 0; }
 
 QScrollArea { background: transparent; border: none; }
+
+QPlainTextEdit[lyrics="true"] {
+    background: $surface; color: $text;
+    border: 1px solid $hairline; border-radius: 12px;
+    padding: 14px; font-size: 14px; line-height: 150%;
+    selection-background-color: $selection;
+}
+
 QDockWidget { titlebar-close-icon: none; titlebar-normal-icon: none; }
 QDockWidget::title { background: $surface; padding: 8px; border: 1px solid $hairline; }
 

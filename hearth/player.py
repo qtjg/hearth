@@ -82,6 +82,10 @@ class QueueEngine:
         """Non-destructively shuffle the upcoming tracks (history untouched)."""
         self._rng.shuffle(self.upcoming)
 
+    def set_order(self, upcoming: list[Track]) -> None:
+        """Replace the upcoming order exactly as given (drag & drop result)."""
+        self.upcoming = list(upcoming)
+
 
 class PlaybackCore(QObject):
     """Wires QueueEngine to Qt Multimedia.
@@ -98,11 +102,13 @@ class PlaybackCore(QObject):
     queue_changed = pyqtSignal()
     repeat_changed = pyqtSignal(str)
     rate_changed = pyqtSignal(float)
+    queue_dry = pyqtSignal(object)                # last track before the queue ran dry
     status = pyqtSignal(str)
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
         self.engine = QueueEngine()
+        self.autoplay: bool = config.AUTOPLAY_DEFAULT
         self._volume = 0.8
         self._rate = 1.0
         self._player = None
@@ -169,9 +175,16 @@ class PlaybackCore(QObject):
             self._player.play()
 
     def next(self) -> None:
+        last = self.engine.current
         track = self.engine.advance()
         self.queue_changed.emit()
         if track is None:
+            if self.autoplay and last is not None:
+                # Spotify-style autoplay: the queue ran dry, ask for a radio
+                # refill around the last track instead of stopping cold.
+                self.status.emit("Queue empty — extending radio…")
+                self.queue_dry.emit(last)
+                return
             self.stop()
             self.status.emit("Queue finished")
             return
@@ -197,6 +210,9 @@ class PlaybackCore(QObject):
             return
         self.engine.repeat = mode
         self.repeat_changed.emit(mode)
+
+    def set_autoplay(self, enabled: bool) -> None:
+        self.autoplay = bool(enabled)
 
     def cycle_repeat(self) -> str:
         order = list(config.REPEAT_MODES)

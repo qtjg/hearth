@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 APP_NAME = "Hearth"
 APP_TAGLINE = "keep the fire warm"
+PLAYLIST_SUFFIX = ".hearthplaylist.json"
 ORG_NAME = "hearth"
 APP_AUTHOR = "Mayank Bhaskar (qtjg)"
 REPO_URL = "https://github.com/qtjg/hearth"
@@ -41,6 +42,13 @@ QUICK_PICKS = (
     "acoustic mornings",
 )
 
+# --- radio / autoplay ---
+RADIO_LIMIT = 25          # tracks fetched per Start Radio / autoplay refill
+AUTOPLAY_DEFAULT = True   # keep the music alive when the queue runs dry
+
+# --- now playing view ---
+NOW_COVER = 240
+
 # --- timing tunables ---
 SEARCH_DEBOUNCE_MS = 350
 SEEK_POLL_MS = 500
@@ -54,6 +62,13 @@ VOLUME_TARGET_DB = -16.0
 MAX_GAIN_DB = 6.0
 MIN_GAIN_DB = -6.0
 PLAYBACK_RATES = (0.75, 1.0, 1.25, 1.5)
+
+# --- v0.4.0: radio, lyrics, shortcuts, backup ---
+RADIO_SIZE = 25              # tracks fetched for "Start radio" / autoplay
+SEEK_STEP_MS = 10_000        # ←/→ keyboard seek step
+VOLUME_STEP = 0.05           # ↑/↓ keyboard volume step
+TOP_TRACKS_LIMIT = 8         # home shelf ranking size
+LYRICS_SOURCE_LABEL = "source"  # ytmusicapi lyrics dict key kept out of the pane
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

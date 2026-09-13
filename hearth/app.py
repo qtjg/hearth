@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 from . import config
 from .catalog import Catalog
 from .hotkeys import effective_chords
-from .jobs import LoadJob, SearchJob
+from .jobs import LoadJob, LyricsJob, RadioJob, SearchJob
 from .models import Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
@@ -90,6 +90,7 @@ class Hearth:
         )
         self.store = HearthStore(self._dir / "hearth.db")
         self.catalog = Catalog()
+        self._lyrics_cache: dict[str, str | None] = {}
         # In-flight jobs are tracked in the module-level _INFLIGHT registry
         # so they survive even if this Hearth object is torn down early.
 
@@ -142,6 +143,10 @@ class Hearth:
         w.enqueue_requested.connect(self._enqueue)
         w.pin_toggled.connect(self._toggle_pin)
         w.queue_remove_requested.connect(self._remove_from_queue)
+        w.queue_reorder_requested.connect(self._reorder_queue)
+        w.radio_requested.connect(self._start_radio)
+        w.rate_cycled.connect(self._cycle_rate)
+        w.sleep_requested.connect(self._set_sleep)
         w.home_refresh_requested.connect(self._refresh_home)
         w.library_refresh_requested.connect(self._refresh_library)
         w.play_pause_requested.connect(self.core.toggle)
@@ -165,6 +170,10 @@ class Hearth:
         self.core.queue_changed.connect(self._on_queue_changed)
         self.core.repeat_changed.connect(lambda m: self._persist())
         self.core.rate_changed.connect(lambda r: self._persist())
+        self.core.queue_dry.connect(self._on_queue_dry)
+        self.core.rate_changed.connect(
+            lambda r: self.window.player_bar.set_speed_label(r)
+        )
 
     def _build_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -249,6 +258,11 @@ class Hearth:
             upcoming.pop(index)
             self.core.queue_changed.emit()
 
+    def _reorder_queue(self, upcoming: list[Track]) -> None:
+        """Apply the drag & drop order from the queue dock."""
+        self.core.engine.set_order(list(upcoming))
+        self.core.queue_changed.emit()
+
     def _toggle_pin(self, track: Track) -> None:
         if self.store.is_pinned(track.video_id):
             self.store.unpin(track.video_id)
@@ -296,6 +310,7 @@ class Hearth:
         self.toast.announce(track)
         if not self._enable_streaming:
             return  # test mode: keep the playback pool out of unit tests
+        self._fetch_lyrics(track)
         job = LoadJob(track)
         job.signals.finished.connect(
             lambda payload: self.core.set_stream(payload[2], payload[0], payload[1])
@@ -320,6 +335,102 @@ class Hearth:
     def _cycle_repeat(self) -> None:
         mode = self.core.cycle_repeat()
         self.panel.set_status(f"Repeat: {mode}")
+
+    def _cycle_rate(self) -> None:
+        rate = self.core.next_rate()
+        self.surface.set_status(f"Speed {rate:g}x")
+
+    def _set_sleep(self, minutes: int) -> None:
+        self.core.set_sleep_timer(minutes or None)
+        self.window.player_bar.set_sleep_label(minutes or None)
+
+    # --- radio / autoplay ---
+
+    def _start_radio(self, track: Track | None = None) -> None:
+        seed = track or self.core.engine.current
+        if seed is None:
+            self.surface.set_status("Play something first, then start radio")
+            return
+        if not self._enable_streaming:
+            self.surface.set_status(f"Radio from: {seed.title} (test mode)")
+            return
+        self.surface.set_status(f"Starting radio from {seed.title}…")
+        job = RadioJob(self.catalog, seed.video_id)
+        job.signals.finished.connect(self._on_radio_ready)
+        job.signals.failed.connect(
+            lambda title: self.surface.set_status(f"Radio failed: {title}")
+        )
+        self._launch(job)
+
+    def _on_radio_ready(self, payload) -> None:
+        seed_id, tracks = payload
+        fresh: list[Track] = []
+        seen = {seed_id}
+        for track in tracks:
+            if track.video_id in seen:
+                continue
+            seen.add(track.video_id)
+            fresh.append(track)
+        if not fresh:
+            self.surface.set_status("Radio came back empty — try another seed")
+            return
+        seed = self.core.engine.current
+        if seed is not None and seed.video_id == seed_id:
+            queue = [seed, *fresh]
+        else:
+            queue = fresh
+        self.core.start_queue(queue, 0)
+        self.surface.set_status(f"Radio: {len(queue)} tracks queued")
+
+    def _on_queue_dry(self, track: Track) -> None:
+        """Autoplay: the queue ran out — extend it with a radio seed."""
+        if not self._enable_streaming:
+            return  # unit tests: keep the playback pool out
+        if track is None:
+            return
+        job = RadioJob(self.catalog, track.video_id)
+        job.signals.finished.connect(self._on_autoplay_ready)
+        job.signals.failed.connect(
+            lambda title: self.surface.set_status(f"Radio failed: {title}")
+        )
+        self._launch(job)
+
+    def _on_autoplay_ready(self, payload) -> None:
+        seed_id, tracks = payload
+        engine = self.core.engine
+        current = engine.current
+        moved_on = current is not None and current.video_id != seed_id
+        if moved_on:
+            return  # the listener picked something else while we were fetching
+        seen = {seed_id} | {t.video_id for t in engine.upcoming} | {
+            t.video_id for t in engine.history
+        }
+        fresh = [t for t in tracks if t.video_id not in seen]
+        if not fresh:
+            self.core.stop()
+            self.core.status.emit("Radio: nothing new found")
+            return
+        engine.upcoming.extend(fresh)
+        self.core.queue_changed.emit()
+        self.core.next()  # keep the music going without a hiccup
+
+    # --- lyrics ---
+
+    def _fetch_lyrics(self, track: Track) -> None:
+        if track.video_id in self._lyrics_cache:
+            self.window.now_view.set_lyrics(track.video_id, self._lyrics_cache[track.video_id])
+            return
+        if len(self._lyrics_cache) > 200:
+            self._lyrics_cache.clear()
+        self.window.now_view.set_lyrics_loading()
+        job = LyricsJob(self.catalog, track.video_id)
+        job.signals.finished.connect(self._on_lyrics_ready)
+        self._launch(job)
+
+    def _on_lyrics_ready(self, payload) -> None:
+        video_id, text = payload
+        self._lyrics_cache[video_id] = text
+        self.window.now_view.set_lyrics(video_id, text)
 
     def _summon(self) -> None:
         if self.ui_mode == "window":
@@ -356,9 +467,15 @@ class Hearth:
         self.panel.set_volume(self.core.volume)
         rate = float(self.settings.value("rate", 1.0))
         self.core.set_rate(rate)
+        self.window.player_bar.set_speed_label(self.core.rate)
         repeat = str(self.settings.value("repeat", config.REPEAT_OFF))
         if repeat in config.REPEAT_MODES:
             self.core.set_repeat(repeat)
+        autoplay = self.settings.value("autoplay", config.AUTOPLAY_DEFAULT)
+        self.core.set_autoplay(
+            autoplay in (True, "true", "True", "1", 1)
+            if isinstance(autoplay, (str, int)) else bool(autoplay)
+        )
 
     def _restore_session(self) -> None:
         pos = self.settings.value("geometry/pos")
@@ -380,6 +497,7 @@ class Hearth:
         self.settings.setValue("volume", self.core.volume)
         self.settings.setValue("rate", self.core.rate)
         self.settings.setValue("repeat", self.core.engine.repeat)
+        self.settings.setValue("autoplay", self.core.autoplay)
         self.settings.setValue("theme", self.panel._palette.key)
         self.settings.setValue("geometry/pos", self.panel.pos())
         self.settings.setValue("window/size", self.window.size())

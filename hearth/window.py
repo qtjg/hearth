@@ -8,8 +8,13 @@ active Palette — no assets, no third-party marks.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtWidgets import (
+    QAbstractItemView,
+    QFileDialog,
     QHBoxLayout,
     QInputDialog,
     QLabel,
@@ -18,6 +23,7 @@ from PyQt6.QtWidgets import (
     QListWidgetItem,
     QMainWindow,
     QMenu,
+    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -26,7 +32,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import config
+from . import config, share
 from .config import Palette, get_palette
 from .cover import CoverTile
 from .models import Track
@@ -357,6 +363,121 @@ class PlaylistView(TrackListView):
         self.layout().insertLayout(2, actions)
 
 
+# ----------------------------------------------------------------- now playing
+
+class NowView(QWidget):
+    """The Now Playing stage: big cover, identity, and the lyrics sheet."""
+
+    pin_toggled = pyqtSignal()
+    radio_requested = pyqtSignal()
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._track: Track | None = None
+        self._video_id: str = ""
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 18, 24, 12)
+        outer.setSpacing(12)
+
+        head = QHBoxLayout()
+        hero = QLabel("Now Playing")
+        hero.setProperty("hero", True)
+        head.addWidget(hero)
+        head.addStretch(1)
+        self._btn_radio = QPushButton("📻 Start radio")
+        self._btn_radio.clicked.connect(self.radio_requested.emit)
+        head.addWidget(self._btn_radio)
+        outer.addLayout(head)
+
+        body = QHBoxLayout()
+        body.setSpacing(24)
+
+        left = QVBoxLayout()
+        left.setSpacing(10)
+        self._cover = CoverTile(palette, config.NOW_COVER)
+        ident = QHBoxLayout()
+        ident.setSpacing(8)
+        text = QVBoxLayout()
+        text.setSpacing(2)
+        self._title = QLabel("Nothing playing")
+        self._title.setProperty("header", True)
+        self._title.setWordWrap(True)
+        self._artist = QLabel("pick something from the shelves")
+        self._artist.setProperty("dim", True)
+        self._artist.setWordWrap(True)
+        text.addWidget(self._title)
+        text.addWidget(self._artist)
+        self._pin = QPushButton("♡")
+        self._pin.setProperty("flat", True)
+        self._pin.setFixedWidth(34)
+        self._pin.setToolTip("Pin to favorites")
+        self._pin.clicked.connect(self.pin_toggled.emit)
+        ident.addLayout(text, 1)
+        ident.addWidget(self._pin)
+        left.addWidget(self._cover, 0, Qt.AlignmentFlag.AlignHCenter)
+        left.addLayout(ident)
+        left.addStretch(1)
+
+        right = QVBoxLayout()
+        right.setSpacing(6)
+        cap = QLabel("LYRICS")
+        cap.setProperty("dim", True)
+        self._lyrics = QPlainTextEdit()
+        self._lyrics.setProperty("lyrics", True)
+        self._lyrics.setReadOnly(True)
+        self._lyrics.setPlaceholderText(
+            "Lyrics show up here once something is playing."
+        )
+        right.addWidget(cap)
+        right.addWidget(self._lyrics, 1)
+
+        body.addLayout(left, 1)
+        body.addLayout(right, 1)
+        outer.addLayout(body, 1)
+
+    # --- state in ---
+
+    def set_track(self, track: Track | None) -> None:
+        self._track = track
+        if track is None:
+            self._video_id = ""
+            self._title.setText("Nothing playing")
+            self._artist.setText("pick something from the shelves")
+            self._pin.setText("♡")
+            self._cover.set_mark()
+            self._lyrics.setPlainText("")
+            return
+        self._video_id = track.video_id
+        self._title.setText(track.title)
+        self._artist.setText(track.artist)
+        if track.thumbnail:
+            self._cover.set_track_cover(track.thumbnail)
+        else:
+            self._cover.set_mark()
+
+    def set_lyrics(self, video_id: str, text: str | None) -> None:
+        """Late-arriving lyrics; drop them if the track moved on meanwhile."""
+        if video_id != self._video_id:
+            return
+        self._lyrics.setPlainText(text or "No lyrics available for this track.")
+
+    def set_lyrics_loading(self) -> None:
+        self._lyrics.setPlainText("Loading lyrics…")
+
+    def set_pinned(self, pinned: bool) -> None:
+        self._pin.setText("♥" if pinned else "♡")
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self._cover.apply_palette(palette)
+
+    @property
+    def current_track(self) -> Track | None:
+        return self._track
+
+
 # ----------------------------------------------------------------- player bar
 
 class PlayerBar(QWidget):
@@ -371,6 +492,10 @@ class PlayerBar(QWidget):
     seek_requested = pyqtSignal(int)
     pin_toggled = pyqtSignal()
     queue_toggled = pyqtSignal()
+    radio_requested = pyqtSignal()
+    rate_cycled = pyqtSignal()
+    sleep_requested = pyqtSignal(int)      # minutes; 0 = off
+    lyrics_toggled = pyqtSignal()
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -446,7 +571,32 @@ class PlayerBar(QWidget):
         center.addLayout(ctrl)
         center.addLayout(seek_row)
 
-        # right: queue + volume
+        # right: lyrics · radio · speed · sleep · queue · volume
+        self._btn_lyrics = QPushButton("♪")
+        self._btn_lyrics.setProperty("flat", True)
+        self._btn_lyrics.setToolTip("Now playing & lyrics")
+        self._btn_lyrics.clicked.connect(self.lyrics_toggled.emit)
+        self._btn_radio = QPushButton("📻")
+        self._btn_radio.setProperty("flat", True)
+        self._btn_radio.setToolTip("Start radio from this track")
+        self._btn_radio.clicked.connect(self.radio_requested.emit)
+        self._btn_speed = QPushButton("1x")
+        self._btn_speed.setProperty("flat", True)
+        self._btn_speed.setFixedWidth(44)
+        self._btn_speed.setToolTip("Playback speed")
+        self._btn_speed.clicked.connect(self.rate_cycled.emit)
+        self._btn_sleep = QPushButton("⏾")
+        self._btn_sleep.setProperty("flat", True)
+        self._btn_sleep.setToolTip("Sleep timer")
+        self._sleep_menu = QMenu(self)
+        for label, minutes in (("Off", 0), ("15 minutes", 15),
+                               ("30 minutes", 30), ("45 minutes", 45),
+                               ("60 minutes", 60)):
+            act = self._sleep_menu.addAction(label)
+            act.triggered.connect(
+                lambda _checked=False, m=minutes: self.sleep_requested.emit(m)
+            )
+        self._btn_sleep.setMenu(self._sleep_menu)
         self._btn_queue = QPushButton("☰ Queue")
         self._btn_queue.setProperty("flat", True)
         self._btn_queue.clicked.connect(self.queue_toggled.emit)
@@ -460,6 +610,10 @@ class PlayerBar(QWidget):
         lay.addLayout(ident, 1)
         lay.addWidget(self._pin)
         lay.addLayout(center, 3)
+        lay.addWidget(self._btn_lyrics)
+        lay.addWidget(self._btn_radio)
+        lay.addWidget(self._btn_speed)
+        lay.addWidget(self._btn_sleep)
         lay.addWidget(self._btn_queue)
         lay.addWidget(self._volume)
 
@@ -505,6 +659,14 @@ class PlayerBar(QWidget):
         self._volume.setValue(int(value * 100))
         self._volume.blockSignals(False)
 
+    def set_speed_label(self, rate: float) -> None:
+        label = f"{rate:g}x"
+        self._btn_speed.setText(label)
+        self._btn_speed.setToolTip(f"Playback speed ({label})")
+
+    def set_sleep_label(self, minutes: int | None) -> None:
+        self._btn_sleep.setText(f"⏾ {minutes}" if minutes else "⏾")
+
     @property
     def current_track(self) -> Track | None:
         return self._track
@@ -522,6 +684,10 @@ class MainWindow(QMainWindow):
     enqueue_requested = pyqtSignal(object)        # append to queue
     pin_toggled = pyqtSignal(object)              # Track
     queue_remove_requested = pyqtSignal(int)
+    queue_reorder_requested = pyqtSignal(list)    # new upcoming order
+    radio_requested = pyqtSignal(object)          # Track | None (None = current)
+    rate_cycled = pyqtSignal()
+    sleep_requested = pyqtSignal(int)             # minutes; 0 = off
     home_refresh_requested = pyqtSignal()
     library_refresh_requested = pyqtSignal()
     play_pause_requested = pyqtSignal()
@@ -532,7 +698,7 @@ class MainWindow(QMainWindow):
     volume_changed = pyqtSignal(float)
     seek_requested = pyqtSignal(int)
 
-    VIEWS = ("home", "search", "library")
+    VIEWS = ("home", "search", "library", "now")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -545,9 +711,11 @@ class MainWindow(QMainWindow):
         self.home_view = HomeView(self._palette)
         self.search_view = SearchView(self._palette)
         self.library_view = LibraryView(self._palette)
+        self.now_view = NowView(self._palette)
 
         self.stack = QStackedWidget()
-        for view in (self.home_view, self.search_view, self.library_view):
+        for view in (self.home_view, self.search_view, self.library_view,
+                     self.now_view):
             self.stack.addWidget(view)
 
         self.player_bar = PlayerBar(self._palette)
@@ -585,7 +753,8 @@ class MainWindow(QMainWindow):
 
         self._nav: dict[str, QPushButton] = {}
         for key, label in (("home", "🏠 Home"), ("search", "🔍 Search"),
-                           ("library", "📚 Your Library")):
+                           ("library", "📚 Your Library"),
+                           ("now", "🎧 Now Playing")):
             btn = QPushButton(label)
             btn.setProperty("nav", True)
             btn.setCheckable(True)
@@ -602,8 +771,14 @@ class MainWindow(QMainWindow):
         add.setFixedWidth(30)
         add.setCursor(Qt.CursorShape.PointingHandCursor)
         add.clicked.connect(self._new_playlist_dialog)
+        imp = QPushButton("⬆")
+        imp.setProperty("flat", True)
+        imp.setFixedWidth(30)
+        imp.setToolTip("Import playlists (JSON)")
+        imp.clicked.connect(self._import_playlists)
         head.addWidget(cap)
         head.addStretch(1)
+        head.addWidget(imp)
         head.addWidget(add)
         lay.addSpacing(12)
         lay.addLayout(head)
@@ -627,6 +802,12 @@ class MainWindow(QMainWindow):
         self._queue_list.setProperty("rows", True)
         self._queue_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._queue_list.customContextMenuRequested.connect(self._queue_menu)
+        # drag & drop reordering (current row is pinned, the rest move freely)
+        self._queue_list.setDragDropMode(
+            QAbstractItemView.DragDropMode.InternalMove
+        )
+        self._queue_list.setDefaultDropAction(Qt.DropAction.MoveAction)
+        self._queue_list.model().rowsMoved.connect(self._on_queue_rows_moved)
         self.queue_dock.setWidget(self._queue_list)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.queue_dock)
         self.queue_dock.hide()
@@ -662,6 +843,16 @@ class MainWindow(QMainWindow):
         self.player_bar.seek_requested.connect(self.seek_requested.emit)
         self.player_bar.pin_toggled.connect(self._on_pin_clicked)
         self.player_bar.queue_toggled.connect(self.toggle_queue)
+        self.player_bar.lyrics_toggled.connect(lambda: self.show_view("now"))
+        self.player_bar.radio_requested.connect(
+            lambda: self.radio_requested.emit(None)
+        )
+        self.player_bar.rate_cycled.connect(self.rate_cycled.emit)
+        self.player_bar.sleep_requested.connect(self.sleep_requested.emit)
+        self.now_view.pin_toggled.connect(self._on_pin_clicked)
+        self.now_view.radio_requested.connect(
+            lambda: self.radio_requested.emit(None)
+        )
 
     # --- navigation ---
 
@@ -778,6 +969,7 @@ class MainWindow(QMainWindow):
     def _track_menu(self, track: Track, menu: QMenu) -> None:
         play_next = menu.addAction("▶ Play next")
         enqueue = menu.addAction("➕ Add to queue")
+        radio = menu.addAction("📻 Start radio")
         menu.addSeparator()
         pinned = self.store.is_pinned(track.video_id) if self.store else False
         pin = menu.addAction("♥ Unpin" if pinned else "♡ Pin to favorites")
@@ -802,6 +994,7 @@ class MainWindow(QMainWindow):
 
         play_next.triggered.connect(lambda: self.play_next_requested.emit(track))
         enqueue.triggered.connect(lambda: self.enqueue_requested.emit(track))
+        radio.triggered.connect(lambda: self.radio_requested.emit(track))
         pin.triggered.connect(lambda: self.pin_toggled.emit(track))
         playlists_menu.triggered.connect(
             lambda act: _add_to(int(act.data()) if act.data() is not None else -1)
@@ -825,15 +1018,67 @@ class MainWindow(QMainWindow):
         pid = int(item.data(Qt.ItemDataRole.UserRole))
         menu = QMenu(self)
         open_act = menu.addAction("Open")
+        export_act = menu.addAction("⬇ Export…")
         rename_act = menu.addAction("Rename")
         delete_act = menu.addAction("Delete")
         chosen = menu.exec(self._playlist_list.viewport().mapToGlobal(pos))
         if chosen is open_act:
             self.open_playlist(pid)
+        elif chosen is export_act:
+            self._export_playlist(pid)
         elif chosen is rename_act:
             self._rename_playlist(pid)
         elif chosen is delete_act:
             self._delete_playlist(pid)
+
+    # --- playlist share (export / import) ---
+
+    def _export_playlist(self, playlist_id: int) -> None:
+        if self.store is None:
+            return
+        name = self.store.playlist_name(playlist_id)
+        if name is None:
+            return
+        tracks = self.store.playlist_tracks(playlist_id)
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export playlist",
+            f"{name}{config.PLAYLIST_SUFFIX}",
+            "Hearth playlist (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        payload = json.dumps(share.encode_playlist(name, tracks), ensure_ascii=False, indent=2)
+        try:
+            Path(path).write_text(payload, encoding="utf-8")
+        except OSError:
+            self.set_status(f"Could not write {path}")
+            return
+        self.set_status(f"Exported {len(tracks)} tracks → {path}")
+
+    def _import_playlists(self) -> None:
+        if self.store is None:
+            return
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import playlists", "",
+            "Hearth playlist (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError:
+            self.set_status(f"Could not read {path}")
+            return
+        imported = share.decode_playlists_text(text)
+        if not imported:
+            self.set_status("No playlists found in that file")
+            return
+        for name, tracks in imported:
+            pid = self.store.create_playlist(name)
+            for track in tracks:
+                self.store.add_to_playlist(pid, track)
+        self.refresh_playlists()
+        self.set_status(f"Imported {len(imported)} playlist(s) from {path}")
 
     def _queue_menu(self, pos) -> None:
         item = self._queue_list.itemAt(pos)
@@ -859,16 +1104,32 @@ class MainWindow(QMainWindow):
             item = QListWidgetItem()
             item.setSizeHint(row.sizeHint())
             item.setData(Qt.ItemDataRole.UserRole, current)
+            item.setData(Qt.ItemDataRole.UserRole + 1, "current")
+            # the playing row is pinned — only upcoming tracks reorder
+            item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsDragEnabled)
             self._queue_list.addItem(item)
             self._queue_list.setItemWidget(item, row)
         for index, track in enumerate(upcoming, start=1):
             item = QListWidgetItem()
             item.setSizeHint(TrackRow(self._palette, track, index).sizeHint())
             item.setData(Qt.ItemDataRole.UserRole, track)
+            item.setData(Qt.ItemDataRole.UserRole + 1, "upcoming")
             self._queue_list.addItem(item)
             self._queue_list.setItemWidget(
                 item, TrackRow(self._palette, track, index)
             )
+
+    def _on_queue_rows_moved(self, *_args) -> None:
+        """Drag & drop finished: read back the new upcoming order."""
+        reordered: list[Track] = []
+        for row in range(self._queue_list.count()):
+            item = self._queue_list.item(row)
+            if item.data(Qt.ItemDataRole.UserRole + 1) == "upcoming":
+                track = item.data(Qt.ItemDataRole.UserRole)
+                if track is not None:
+                    reordered.append(track)
+        if reordered:
+            self.queue_reorder_requested.emit(reordered)
 
     # --- pin ---
 
@@ -881,6 +1142,7 @@ class MainWindow(QMainWindow):
 
     def set_track(self, track: Track | None) -> None:
         self.player_bar.set_track(track)
+        self.now_view.set_track(track)
         if track is None:
             self.setWindowTitle(f"🔥 {config.APP_NAME} — {config.APP_TAGLINE}")
         else:
@@ -888,6 +1150,7 @@ class MainWindow(QMainWindow):
 
     def set_pinned(self, pinned: bool) -> None:
         self.player_bar.set_pinned(pinned)
+        self.now_view.set_pinned(pinned)
 
     def set_playing(self, playing: bool) -> None:
         self.player_bar.set_playing(playing)
@@ -909,6 +1172,7 @@ class MainWindow(QMainWindow):
 
     def apply_palette(self, palette: Palette) -> None:
         self._palette = palette
+        self.now_view.apply_palette(palette)
         self.setStyleSheet(build_stylesheet(palette))
 
     def summon(self) -> None:
