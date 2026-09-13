@@ -81,9 +81,8 @@ class Hearth:
         )
         self.store = HearthStore(self._dir / "hearth.db")
         self.catalog = Catalog()
-        # In-flight QRunnables: the pool owns the C++ side, but Python must
-        # keep the wrapper (and its signal carrier) alive until the job lands.
-        self._jobs: list = []
+        # In-flight jobs are tracked in the module-level _INFLIGHT registry
+        # so they survive even if this Hearth object is torn down early.
 
         self.guard = InstanceGuard() if single_instance else None
         if self.guard is not None and not self.guard.is_primary:
@@ -173,8 +172,7 @@ class Hearth:
         job = SearchJob(self.catalog, query)
         job.signals.finished.connect(self.panel.show_results)
         job.signals.failed.connect(lambda msg: self.panel.set_status(f"Search failed: {msg}"))
-        self._jobs.append(job)
-        QThreadPool.globalInstance().start(job)
+        self._launch(job)
 
     def _pick_track(self, track: Track) -> None:
         self.core.play_track(track)
@@ -195,7 +193,18 @@ class Hearth:
         job.signals.failed.connect(
             lambda title: self.panel.set_status(f"Could not resolve: {title}")
         )
-        self._jobs.append(job)
+        self._launch(job)
+
+    def _launch(self, job) -> None:
+        """Start a QRunnable, keeping it referenced until it completes.
+
+        The module-level registry keeps the wrapper (and its signal
+        carrier) alive even if the Hearth object itself is torn down
+        while a worker thread is still inside run().
+        """
+        _INFLIGHT.add(job)
+        job.signals.finished.connect(lambda *_: _INFLIGHT.discard(job))
+        job.signals.failed.connect(lambda *_: _INFLIGHT.discard(job))
         QThreadPool.globalInstance().start(job)
 
     def _cycle_repeat(self) -> None:
@@ -246,7 +255,6 @@ class Hearth:
     def shutdown(self) -> None:
         # Let in-flight jobs land while their recipients are still alive.
         QThreadPool.globalInstance().waitForDone(5000)
-        self._jobs.clear()
         self._persist()
         self.store.close()
 
