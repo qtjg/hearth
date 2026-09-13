@@ -1,5 +1,8 @@
-"""Lets the package run as `python -m hearth`."""
+"""`python -m hearth` entry point."""
+
+import sys
 
 from .app import main
 
-raise SystemExit(main())
+if __name__ == "__main__":
+    sys.exit(main())

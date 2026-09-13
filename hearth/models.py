@@ -1,59 +1,63 @@
-"""
-models.py
-Data shapes shared across Hearth.
-
-A Track is the single unit everything else speaks: search results, queue
-slots, favorites and history rows all serialize down to this shape.
-"""
+"""Track dataclass and serialization helpers."""
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
-from typing import Any, Dict, Optional
+import json
+from dataclasses import asdict, dataclass, fields
 
 
 @dataclass
 class Track:
-    """One playable item and the metadata needed to render and stream it."""
+    """A playable song in the Hearth universe."""
 
     video_id: str
     title: str
     artist: str
-    duration: str = ""
-    artwork_url: str = ""
-    stream_url: Optional[str] = None
+    duration: str = ""          # human readable, e.g. "3:45"
+    duration_sec: int = 0
+    thumbnail: str = ""
+    playlist_id: str = ""
 
-    @property
-    def key(self) -> str:
-        """Unique track identifier."""
-        return self.video_id
-
-    @property
-    def byline(self) -> str:
-        """Artist display line with a graceful empty state."""
-        return self.artist or "unknown artist"
-
-    def is_same_as(self, other: Optional["Track"]) -> bool:
-        """Identity comparison that tolerates None."""
-        return other is not None and other.video_id == self.video_id
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Serializable form for history tables and debugging."""
+    def to_dict(self) -> dict:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> "Track":
-        """Rebuild a Track from a dictionary, tolerating missing keys."""
-        if not isinstance(data, dict):
-            data = {}
-        return cls(
-            video_id=str(data.get("video_id", "")),
-            title=str(data.get("title", "untitled")),
-            artist=str(data.get("artist", "unknown artist")),
-            duration=str(data.get("duration", "")),
-            artwork_url=str(data.get("artwork_url", "")),
-            stream_url=data.get("stream_url"),
-        )
+    def from_dict(cls, data: dict) -> "Track":
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in data.items() if k in known})
 
-    def __str__(self) -> str:
-        return f"{self.title} — {self.byline}"
+    def to_json(self) -> str:
+        return json.dumps(self.to_dict(), ensure_ascii=False)
+
+    @classmethod
+    def from_json(cls, raw: str) -> "Track":
+        return cls.from_dict(json.loads(raw))
+
+    @property
+    def display_name(self) -> str:
+        return f"{self.artist} — {self.title}" if self.artist else self.title
+
+
+def format_duration(seconds: int | float | None) -> str:
+    """441 -> '7:21'; None/negative -> ''."""
+    if seconds is None or seconds < 0:
+        return ""
+    seconds = int(seconds)
+    hours, rem = divmod(seconds, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def parse_duration(text: str) -> int:
+    """'3:45' -> 225; '1:02:03' -> 3723; garbage -> 0."""
+    if not text:
+        return 0
+    parts = text.strip().split(":")
+    if not all(p.isdigit() for p in parts):
+        return 0
+    total = 0
+    for part in parts:
+        total = total * 60 + int(part)
+    return total

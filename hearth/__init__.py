@@ -1,4 +1,7 @@
 """Hearth — a cozy floating music companion for every desktop."""
 
-__version__ = "0.1.0"
-__all__ = ["__version__"]
+__title__ = "Hearth"
+__version__ = "0.2.0"
+__author__ = "Mayank Bhaskar (qtjg)"
+__license__ = "MIT"
+__url__ = "https://github.com/qtjg/hearth"

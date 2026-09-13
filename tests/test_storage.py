@@ -1,75 +1,59 @@
-"""Tests for the SQLite favorites/history storage layer."""
-
-from __future__ import annotations
-
-from pathlib import Path
+"""SQLite favorites & history storage."""
 
 from hearth.models import Track
-from hearth.storage import HearthStorage
+from hearth.storage import HearthStore
+
+from .test_models import make_track
 
 
-def make_track(vid: str, title: str = "Song", artist: str = "Artist") -> Track:
-    return Track(video_id=vid, title=title, artist=artist, duration="3:00")
+def make_store(tmp_path) -> HearthStore:
+    return HearthStore(tmp_path / "hearth.db")
 
 
-def test_favorites_crud(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    t = make_track("v1", "Favorite Song")
-
-    assert not store.is_favorite("v1")
-    store.add_favorite(t)
-    assert store.is_favorite("v1")
-
-    rows = store.get_favorites()
-    assert len(rows) == 1
-    assert rows[0].title == "Favorite Song"
-
-    store.remove_favorite("v1")
-    assert not store.is_favorite("v1")
-    assert store.get_favorites() == []
+def test_pin_and_unpin(tmp_path):
+    store = make_store(tmp_path)
+    store.pin(make_track())
+    assert store.is_pinned("dQw4w9WgXcQ")
+    store.unpin("dQw4w9WgXcQ")
+    assert not store.is_pinned("dQw4w9WgXcQ")
+    store.close()
 
 
-def test_favorite_upsert_refreshes_row(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    store.add_favorite(make_track("v1", "Old Title"))
-    store.add_favorite(make_track("v1", "New Title"))
-    rows = store.get_favorites()
-    assert len(rows) == 1
-    assert rows[0].title == "New Title"
+def test_favorites_ordering_newest_first(tmp_path):
+    store = make_store(tmp_path)
+    store.pin(make_track(video_id="aaa", title="First"))
+    store.pin(make_track(video_id="bbb", title="Second"))
+    favs = store.favorites()
+    assert [t.video_id for t in favs] == ["bbb", "aaa"]
+    store.close()
 
 
-def test_favorites_order_newest_first(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    store.add_favorite(make_track("a"))
-    store.add_favorite(make_track("b"))
-    store.add_favorite(make_track("c"))
-    ids = [t.video_id for t in store.get_favorites()]
-    assert ids == ["c", "b", "a"]
+def test_pin_replaces_duplicate(tmp_path):
+    store = make_store(tmp_path)
+    store.pin(make_track(video_id="aaa", title="V1"))
+    store.pin(make_track(video_id="aaa", title="V2"))
+    favs = store.favorites()
+    assert len(favs) == 1
+    assert favs[0].title == "V2"
+    store.close()
 
 
-def test_history_record_and_dedupe(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    store.record_history(make_track("v1", "Played"))
-    store.record_history(make_track("v2", "Also Played"))
-    store.record_history(make_track("v1", "Played Again"))
-
-    rows = store.get_history()
-    assert len(rows) == 2  # one row per unique track
-    by_id = {t.video_id: t for t in rows}
-    assert by_id["v1"].title == "Played Again"
-
-
-def test_history_clear(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    store.record_history(make_track("v1"))
-    store.clear_history()
-    assert store.get_history() == []
+def test_history_and_prune(tmp_path):
+    store = make_store(tmp_path)
+    for i in range(12):
+        store.log_play(make_track(video_id=f"vid{i}"))
+    recent = store.history(limit=5)
+    assert [t.video_id for t in recent] == [f"vid{i}" for i in range(11, 6, -1)]
+    removed = store.prune_history(keep=8)
+    assert removed == 4
+    assert len(store.history()) == 8
+    store.close()
 
 
-def test_bad_inputs_are_noops(tmp_path: Path) -> None:
-    store = HearthStorage(tmp_path / "hearth.db")
-    store.record_history(None)  # type: ignore[arg-type]
-    store.add_favorite(Track(video_id="", title="x", artist="y"))  # empty id ignored
-    store.remove_favorite("")
-    assert store.get_history() == []
-    assert store.get_favorites() == []
+def test_persistence_across_connections(tmp_path):
+    store = make_store(tmp_path)
+    store.pin(make_track(video_id="keepme"))
+    store.close()
+    reopened = HearthStore(tmp_path / "hearth.db")
+    assert reopened.is_pinned("keepme")
+    reopened.close()

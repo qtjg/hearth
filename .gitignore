@@ -1,15 +1,17 @@
-.venv/
-venv/
-env/
+# Hearth — cozy floating music companion
 __pycache__/
 *.py[cod]
 *.egg-info/
+.eggs/
 build/
 dist/
-.vscode/
-.idea/
-*.swp
-.DS_Store
-*.log
-*.db
+.venv/
+venv/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+hearth.db
+*.log
+.DS_Store
