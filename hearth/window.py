@@ -36,7 +36,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from . import config, share
+from . import config, share, world
 from .config import Palette, get_palette
 from .cover import CoverTile
 from .models import Album, Track
@@ -634,6 +634,115 @@ class RemotePlaylistView(TrackListView):
         self.layout().insertLayout(2, actions)
 
 
+class WorldView(QWidget):
+    """The World Explorer: a curated dial of every kind of music on Earth.
+
+    Genre stations across nine regions — tap one and the app tunes a
+    station (search-everywhere backed, so the dial never comes back
+    static). A filter narrows the dial; the dice tunes a surprise.
+    All data is local (hearth.world), so the page paints instantly,
+    network or no network.
+    """
+
+    station_requested = pyqtSignal(object)     # world.Genre
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 18, 24, 12)
+        outer.setSpacing(10)
+
+        head = QHBoxLayout()
+        hero = QLabel("🗺️ World Explorer")
+        hero.setProperty("hero", True)
+        self._status = QLabel(
+            f"{len(world.genres())} stations — every continent, every era"
+        )
+        self._status.setProperty("dim", True)
+        head.addWidget(hero)
+        head.addStretch(1)
+        head.addWidget(self._status)
+        surprise = QPushButton("🎲 Surprise me")
+        surprise.setToolTip("Tune a random genre from anywhere on Earth")
+        surprise.clicked.connect(self._surprise)
+        head.addWidget(surprise)
+        outer.addLayout(head)
+
+        self._filter = QLineEdit()
+        self._filter.setPlaceholderText(
+            "Filter the dial — try 'Africa', 'metal', 'bhangra'…"
+        )
+        self._filter.setClearButtonEnabled(True)
+        self._filter.textChanged.connect(self._apply_filter)
+        outer.addWidget(self._filter)
+
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
+        host = QWidget()
+        host_lay = QVBoxLayout(host)
+        host_lay.setContentsMargins(0, 4, 8, 12)
+        host_lay.setSpacing(12)
+        area.setWidget(host)
+        outer.addWidget(area, 1)
+
+        # (region caption, [chip, ...]) — kept for the filter to sweep
+        self._sections: list[tuple[QLabel, list[QPushButton]]] = []
+        for region, items in world.genres_by_region():
+            cap = QLabel(region.upper())
+            cap.setProperty("dim", True)
+            host_lay.addWidget(cap)
+            grid_host = QWidget()
+            grid = QGridLayout(grid_host)
+            grid.setContentsMargins(0, 0, 0, 0)
+            grid.setSpacing(6)
+            grid.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+            host_lay.addWidget(grid_host)
+            chips: list[QPushButton] = []
+            for index, g in enumerate(items):
+                chip = QPushButton(f"{g.emoji} {g.label}")
+                chip.setProperty("chip", True)
+                chip.setCursor(Qt.CursorShape.PointingHandCursor)
+                chip.setToolTip(f"{g.blurb}\n(region: {g.region})")
+                chip.setProperty("genre", g)
+                chip.clicked.connect(
+                    lambda _=False, gg=g: self.station_requested.emit(gg)
+                )
+                grid.addWidget(chip, index // 4, index % 4)
+                chips.append(chip)
+            self._sections.append((cap, chips))
+
+    # --- filter / dice ---
+
+    def _apply_filter(self, text: str) -> None:
+        needle = text.strip()
+        visible = 0
+        for cap, chips in self._sections:
+            any_visible = False
+            for chip in chips:
+                g = chip.property("genre")
+                show = (not needle) or world.match(g, needle)
+                chip.setVisible(show)
+                any_visible = any_visible or show
+                visible += 1 if show else 0
+            cap.setVisible(any_visible)
+        total = len(world.genres())
+        if not needle:
+            self._status.setText(f"{total} stations — every continent, every era")
+        else:
+            self._status.setText(
+                f"{visible} of {total} stations match “{needle}”"
+            )
+
+    def _surprise(self) -> None:
+        self.station_requested.emit(world.random_genre())
+
+    def set_status(self, text: str) -> None:
+        self._status.setText(text)
+
+
 class PlaylistView(TrackListView):
     """One playlist: header actions + its rows."""
 
@@ -1022,6 +1131,7 @@ class MainWindow(QMainWindow):
     discover_charts_requested = pyqtSignal()
     discover_explore_requested = pyqtSignal(str)     # new_releases|trending|new_videos
     discover_enqueue_all_requested = pyqtSignal(list)  # queue a whole curated list
+    world_station_requested = pyqtSignal(object)     # world.Genre — tune a station
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -1030,7 +1140,7 @@ class MainWindow(QMainWindow):
     volume_changed = pyqtSignal(float)
     seek_requested = pyqtSignal(int)
 
-    VIEWS = ("home", "discover", "search", "library", "now")
+    VIEWS = ("home", "discover", "world", "search", "library", "now")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -1042,6 +1152,7 @@ class MainWindow(QMainWindow):
 
         self.home_view = HomeView(self._palette)
         self.discover_view = DiscoverView(self._palette)
+        self.world_view = WorldView(self._palette)
         self.search_view = SearchView(self._palette)
         self.library_view = LibraryView(self._palette)
         self.now_view = NowView(self._palette)
@@ -1049,9 +1160,9 @@ class MainWindow(QMainWindow):
         self.remote_playlist_view = RemotePlaylistView(self._palette)
 
         self.stack = QStackedWidget()
-        for view in (self.home_view, self.discover_view, self.search_view,
-                     self.library_view, self.now_view, self.album_view,
-                     self.remote_playlist_view):
+        for view in (self.home_view, self.discover_view, self.world_view,
+                     self.search_view, self.library_view, self.now_view,
+                     self.album_view, self.remote_playlist_view):
             self.stack.addWidget(view)
 
         self.player_bar = PlayerBar(self._palette)
@@ -1090,7 +1201,7 @@ class MainWindow(QMainWindow):
 
         self._nav: dict[str, QPushButton] = {}
         for key, label in (("home", "🏠 Home"), ("discover", "🧭 Discover"),
-                           ("search", "🔍 Search"),
+                           ("world", "🗺️ World"), ("search", "🔍 Search"),
                            ("library", "📚 Your Library"),
                            ("now", "🎧 Now Playing")):
             btn = QPushButton(label)
@@ -1192,6 +1303,7 @@ class MainWindow(QMainWindow):
         d.collection_opened.connect(self.discover_collection_opened.emit)
         d.charts_requested.connect(self.discover_charts_requested.emit)
         d.explore_requested.connect(self.discover_explore_requested.emit)
+        self.world_view.station_requested.connect(self.world_station_requested.emit)
         d.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )

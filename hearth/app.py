@@ -11,10 +11,19 @@ from PyQt6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import config
+from . import config, world
 from .catalog import Catalog
 from .hotkeys import effective_chords
-from .jobs import AlbumJob, DiscoverJob, LoadJob, LyricsJob, RadioJob, ScopedSearchJob, SearchJob
+from .jobs import (
+    AlbumJob,
+    DiscoverJob,
+    LoadJob,
+    LyricsJob,
+    RadioJob,
+    ScopedSearchJob,
+    SearchJob,
+    WorldJob,
+)
 from .models import Album, Collection, Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
@@ -96,6 +105,9 @@ class Hearth:
         self._discover_moods: list | None = None
         self._mood_playlists_cache: dict[str, list[Collection]] = {}
         self._explore_cache: tuple | None = None
+        # World Explorer: rotates the genre search seeds so the same dial
+        # spins up a different station each visit.
+        self._world_spin = 0
         # In-flight jobs are tracked in the module-level _INFLIGHT registry
         # so they survive even if this Hearth object is torn down early.
 
@@ -165,6 +177,7 @@ class Hearth:
         w.discover_charts_requested.connect(self._discover_charts)
         w.discover_explore_requested.connect(self._discover_explore)
         w.discover_enqueue_all_requested.connect(self._enqueue_all)
+        w.world_station_requested.connect(self._start_world_station)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -239,6 +252,7 @@ class Hearth:
         return self.window if self.ui_mode == "window" else self.panel
 
     def _run_search(self, query: str) -> None:
+        self.window.search_view.set_header("Search")  # a manual search replaces station pages
         self.surface.set_status("Searching…")
         job = SearchJob(self.catalog, query)
         job.signals.finished.connect(self._show_search_results)
@@ -504,6 +518,40 @@ class Hearth:
         self.core.engine.upcoming.extend(list(tracks))
         self.core.queue_changed.emit()
         self.surface.set_status(f"Queued {len(tracks)} tracks")
+
+    # --- world explorer: the curated dial ---
+
+    def _start_world_station(self, genre) -> None:
+        """A World Explorer chip (or the dice) was clicked: tune that dial."""
+        if not self._enable_streaming:
+            self.surface.set_status(f"🗺️ {genre.label} station (test mode)")
+            return
+        self._world_spin += 1
+        query = world.station_query(genre, spin=self._world_spin)
+        self.window.world_view.set_status(
+            f"Tuning {genre.emoji} {genre.label} — “{query}”"
+        )
+        self.surface.set_status(f"🗺️ Tuning into {genre.label}…")
+        job = WorldJob(self.catalog, query, genre.label)
+        job.signals.finished.connect(self._on_world_ready)
+        job.signals.failed.connect(
+            lambda label: self.surface.set_status(f"🗺️ {label}: could not tune in")
+        )
+        self._launch(job)
+
+    def _on_world_ready(self, payload) -> None:
+        """Station fetched: show it as a playable list and start spinning."""
+        label, tracks = payload
+        if not tracks:
+            self.surface.set_status(
+                f"🗺️ {label}: static on this frequency — roll the dice"
+            )
+            return
+        self.window.show_search_results(list(tracks))
+        self.window.search_view.set_header(f"🗺️ {label} — world station")
+        self.window.show_view("search")
+        self.surface.set_status(f"{label}: {len(tracks)} tracks queued")
+        self.core.start_queue(list(tracks), 0)
 
     def _on_queue_changed(self) -> None:
         self.window.set_queue(

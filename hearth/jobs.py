@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
 from PyQt6.QtCore import QObject, QRunnable, pyqtSignal
 
@@ -135,6 +136,38 @@ class DiscoverJob(QRunnable):
             log.warning("DiscoverJob got unknown kind %r", self.kind)
             return
         self.signals.emit_safe(self.signals.finished, (self.kind, payload))
+
+
+class WorldJob(QRunnable):
+    """Tunes one world-genre station; emits (label, tracks).
+
+    Runs Catalog.search_everywhere — songs, then videos, then the
+    yt-dlp web fallback — so a genre dial never comes back static just
+    because the guest catalogue is shy.
+    """
+
+    def __init__(self, catalog: Catalog, query: str, label: str,
+                 limit: int | None = None,
+                 fallback: Callable | None = None):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.catalog = catalog
+        self.query = query
+        self.label = label
+        self.limit = limit
+        self.fallback = fallback
+
+    def run(self) -> None:  # noqa: D102
+        from . import config
+        from .catalog import web_search_tracks
+
+        tracks = self.catalog.search_everywhere(
+            self.query,
+            limit=self.limit or config.WORLD_STATION_LIMIT,
+            fallback=self.fallback if self.fallback is not None else web_search_tracks,
+        )
+        self.signals.emit_safe(self.signals.finished, (self.label, tracks))
 
 
 class LoadJob(QRunnable):

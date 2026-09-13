@@ -147,6 +147,41 @@ class Catalog:
         )
         return self._map_results(raw or [])
 
+    def search_everywhere(
+        self,
+        query: str,
+        limit: int = 20,
+        attempts: int = RETRY_ATTEMPTS,
+        base_delay: float = RETRY_BASE_DELAY,
+        sleep: Callable[[float], None] = time.sleep,
+        client_factory: Callable | None = None,
+        fallback: Callable[[str, int], list[Track]] | None = None,
+    ) -> list[Track]:
+        """Songs, then videos, then a web fallback. Never raises.
+
+        The guest catalogue misses rare live cuts, B-sides and regional
+        uploads — the fallback leg (`fallback(query, limit)`) catches
+        those. None skips the web leg (unit tests stay offline).
+        """
+        for scope in ("songs", "videos"):
+            raw = self._retry(
+                lambda: self._get_client(client_factory).search(
+                    query, filter=scope, limit=limit
+                ),
+                f"search-everywhere-{scope}({query!r})", attempts, base_delay,
+                sleep, default=[],
+            )
+            mapped = self._map_results(raw or [])
+            if mapped:
+                return mapped
+        if fallback is None:
+            return []
+        try:
+            return list(fallback(query, limit))
+        except Exception as exc:  # noqa: BLE001 - the fallback must not crash either
+            log.warning("search_everywhere fallback failed for %r: %s", query, exc)
+            return []
+
     def search_albums(
         self,
         query: str,
@@ -440,3 +475,48 @@ def _duration_to_sec(seconds) -> int:
 def _seconds_to_clock(seconds: int) -> str:
     minutes, secs = divmod(seconds, 60)
     return f"{minutes}:{secs:02d}"
+
+
+def web_search_tracks(query: str, limit: int = 20) -> list[Track]:
+    """Last-resort web search via yt-dlp's YouTube index. Never raises.
+
+    This is the 'each and every music' insurance: if the YT Music guest
+    catalogue has never heard of a track, the world's biggest video
+    index probably has. The search runs flat (ids + titles only) — the
+    heavy per-video resolution already happens later, in LoadJob, so
+    this leg stays fast and dodges YouTube's metadata bot-checks.
+    """
+    try:
+        import yt_dlp  # lazy: only paid for when the catalogue comes up empty
+
+        ydl = yt_dlp.YoutubeDL({
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "default_search": "ytsearch",
+            "extract_flat": True,   # ids/titles only — LoadJob resolves later
+        })
+        info = ydl.extract_info(f"ytsearch{int(limit)}:{query}", download=False)
+    except Exception as exc:  # noqa: BLE001 - network layer must not crash UI
+        log.warning("web search failed for %r: %s", query, exc)
+        return []
+    tracks: list[Track] = []
+    for entry in (info or {}).get("entries") or []:
+        if not isinstance(entry, dict) or not entry.get("id"):
+            continue
+        seconds = _duration_to_sec(entry.get("duration"))
+        thumbs = entry.get("thumbnails") or []
+        tracks.append(
+            Track(
+                video_id=str(entry["id"]),
+                title=entry.get("title") or "Unknown",
+                artist=entry.get("uploader") or entry.get("channel") or "Unknown artist",
+                duration=_seconds_to_clock(seconds),
+                duration_sec=seconds,
+                thumbnail=(
+                    thumbs[-1].get("url", "")
+                    if thumbs else entry.get("thumbnail") or ""
+                ),
+            )
+        )
+    return tracks

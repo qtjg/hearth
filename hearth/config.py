@@ -71,6 +71,7 @@ TOP_TRACKS_LIMIT = 8         # home shelf ranking size
 # --- v0.6.0: discover (the whole world's music) ---
 DISCOVER_PLAYLIST_LIMIT = 300   # max tracks pulled per curated playlist page
 DISCOVER_CARD_SIZE = 150        # square thumbnail size of discover shelf cards
+WORLD_STATION_LIMIT = 20        # tracks fetched per world-genre station tune-in
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

@@ -5,7 +5,7 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+live+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-179%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![tests](https://img.shields.io/badge/tests-201%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
 ![version](https://img.shields.io/badge/version-v0.6.0-ff7a18?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
@@ -154,6 +154,36 @@ genres, charts, releases — and every card plays in one tap:
   (100+ tracks straight into the up-next queue), plus per-track context
   menus — pin, radio, play-next, add-to-playlist, copy link.
 
+## 🗺️ World Explorer — the Curated Dial (v0.6)
+
+Discover browses what YT Music's shelves serve today. The **🗺️ World** tab is
+the other half of the promise — a hand-built dial of **74 genre stations**
+spanning **nine regions of sound**, so every kind of music on Earth is one
+tap away even when the network (or the guest API) is having a bad day:
+
+- **🥁 Africa** — Afrobeat, Amapiano, Highlife, Ethio-Jazz, Makossa, Taarab
+- **🌸 Asia** — K-Pop, J-Pop, City Pop, Mandopop, Cantopop, Bollywood,
+  Bhangra, Kollywood, Hindustani & Carnatic classical, Qawwali
+- **🇬🇧 Europe** — Britpop, Eurodance, Italo Disco, Flamenco, Fado, Chanson,
+  Balkan Brass, Nordic Folk, Celtic, Klezmer
+- **🌶️ Latin America** — Reggaeton, Salsa, Bachata, Cumbia, Bossa Nova, MPB,
+  Tango, Rock en español · **🟩 Caribbean** — Reggae, Dancehall, Soca, Calypso
+- **🌙 MENA** — Arabic Pop, Raï, Khaliji, Anatolian Rock, Persian Classical
+- **🎸 North America** — Blues, Bluegrass, Country, Motown, Funk, Gospel,
+  New Orleans Jazz, Surf Rock
+- **🏠 Global & Electronic** — House, Techno, Trance, DnB, Dubstep, Ambient,
+  Lo-Fi, Synthwave, Jazz, Classical, Hip-Hop, R&B, Metal, Punk, Indie
+- **📼 Eras** — 60s Oldies → 2010s Bangers
+
+Each dial spins a **station**: rotating search seeds (same genre, fresh mix
+every visit), instant queue-up. **🔎 Filter** the dial ("africa", "metal",
+"bhangra"…) and **🎲 Surprise me** tunes anywhere on Earth.
+
+**🔍 Search-everywhere fallback:** when the guest catalogue has never heard
+of a track — rare live cuts, B-sides, regional uploads — hearth falls back
+to the web (songs → videos → yt-dlp's index), so "we can't find it" comes
+as close to impossible as a player can get.
+
 ## ✨ What It Does
 
 | Feature | The Vibe |
@@ -173,6 +203,7 @@ genres, charts, releases — and every card plays in one tap:
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
 | 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
 | 🌍 **Discover the world** | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
+| 🗺️ **World Explorer** | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
 | 📝 **Lyrics** | Now Playing page with auto-loaded lyrics, cache, and no-lyrics fallback |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
@@ -277,10 +308,11 @@ hearth/
 │   ├── toast.py        → non-focus-stealing now-playing toast
 │   ├── tray.py         → tray presence, painted icon, single-instance guard
 │   ├── window.py       → the three-pane main window (sidebar/shelves/transport)
+│   ├── world.py        → the 74-genre World Explorer universe (pure data)
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
 ├── docs/assets/        → animated 3D SVG artwork used by this README
-├── tests/              → 179 headless tests (offscreen Qt platform)
+├── tests/              → 201 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -291,10 +323,12 @@ hearth/
 
 ## 🧪 Testing
 
-179 tests cover models, palettes, playlists, share codecs, storage, retry
+201 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
-caching, hotkey conflicts, the main window (views, player bar, queue dock with
-drag & drop, pin flow), and the real app booting headless:
+caching, hotkey conflicts, the genre universe (every dial described, seed
+rotation), search-everywhere fallback ladders, the main window (views,
+player bar, queue dock with drag & drop, pin flow), and the real app
+booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
