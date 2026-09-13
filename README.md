@@ -1,113 +1,70 @@
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:FF6B35,50:E8491D,100:7C1D12&height=210&section=header&text=HEARTH&fontSize=76&fontColor=fff8f2&animation=fadeIn&desc=the%20desktop%20music%20player%20for%20YouTube%20Music&descSize=18&descColor=ffd9c2&descAlignY=68&descAlignX=50" width="100%" alt="Hearth banner"/>
+<img src="docs/assets/hero-3d.svg" width="100%" alt="Hearth — a cozy three-pane desktop player for YouTube Music"/>
 
-[![Typing SVG](https://readme-typing-svg.demolab.com?font=Fira+Code:wght@500;700&size=20&pause=1100&color=FF6B35&center=true&vCenter=true&random=false&width=640&height=56&lines=Arch+%C2%B7+Windows+%C2%B7+macOS+%E2%80%94+runs+where+you+run;No+account.+No+keys.+No+telemetry.;Radio+%C2%B7+Lyrics+%C2%B7+Endless+autoplay)](https://github.com/qtjg/hearth)
+<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+live+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
-![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)
-![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![PyQt6](https://img.shields.io/badge/Qt6-PyQt6-41CD52?style=for-the-badge&logo=qt&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-155_passing-2EA043?style=for-the-badge&logo=pytest&logoColor=white)
-![Storage](https://img.shields.io/badge/storage-SQLite-003B57?style=for-the-badge&logo=sqlite&logoColor=white)
-![Platform](https://img.shields.io/badge/platform-Arch_%7C_Win_%7C_macOS-1793D1?style=for-the-badge&logo=archlinux&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-E8491D?style=for-the-badge)
+[![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
+![tests](https://img.shields.io/badge/tests-155%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.5.0-ff7a18?style=flat-square)
+![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
+![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
+![license](https://img.shields.io/badge/license-MIT-8b949e?style=flat-square)
+![platforms](https://img.shields.io/badge/arch%20%7C%20windows%20%7C%20macos-every%20desktop-ff2d55?style=flat-square)
 
-**Hearth** is a full three-pane desktop music player for YouTube Music.
-Sidebar navigation · Home shelves · Playlists · Now Playing · Bottom transport bar.
+**A full three-pane desktop music player for YouTube Music.**
+
+*Sidebar navigation · Home shelves · Playlists · Now Playing with lyrics · Endless radio · Runs where you run*
 
 </div>
 
 ---
 
-## 🔥 The Stack in 3D
+## 🧊 The System, in 3D
 
-Four layers, one campfire — drawn the way it sits in memory, widest at the
-bottom where your library lives:
+Both diagrams below are hand-built, zero-dependency animated SVGs (pure SMIL —
+no JavaScript, no external services) living in
+[`docs/assets/`](docs/assets/). They float, glow, and flow directly on GitHub —
+zoom in, they're lossless at any size.
 
-```text
-                      ♪
-                ╱▔▔▔▔▔▔▔▔▔▔▔▔╲
-               ╱   UI LAYER   ╲
-              ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
-             ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
-            ╱      APP CORE      ╲
-           ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
-          ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
-         ╱       NETWORK I/O        ╲
-        ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
-       ╱▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔╲
-      ╱         DATA · SQLITE          ╲
-     ╱▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁╲
-```
+<img src="docs/assets/arch-3d.svg" width="100%" alt="Isometric 3D diagram of Hearth's architecture: UI, PlaybackCore, worker pools, catalog, yt-dlp and YT Music API"/>
 
-| Layer | Modules | Role |
-|:---|:---|:---|
-| 🔲 **UI** | `window.py` · `panel.py` · `theme.py` · `cover.py` | sidebar, shelves, transport, Now Playing — all Palette-themed |
-| 🧠 **Core** | `app.py` · `player.py` · `jobs.py` · `toast.py` | lifecycle, queue engine, autoplay, hotkeys |
-| 🌐 **I/O** | `catalog.py` · `stream.py` · `tray.py` · `share.py` | YT Music guest API, yt-dlp resolver, tray, portable JSON |
-| 💾 **Data** | `storage.py` · `models.py` · `config.py` · `utils.py` | the SQLite file you own — favorites, playlists, history |
-
----
-
-## 🧠 How It Works (The Threading Architecture)
-
-Stream resolution and catalogue search run completely asynchronously on
-**isolated thread pools**, so audio decoding never queues behind heavy work:
-
-1. **Playback Pool** — dedicated to `LoadJob`: the instant you pick a track,
-   its audio stream is resolved off the GUI thread and handed to
-   `QMediaPlayer`.
-2. **Background Pool** — `SearchJob` (YT Music guest API with exponential
-   retry backoff). Typing never stalls the window.
+Hearth is a stack of floating layers, and the anim shows exactly how a request
+travels: everything enters through the **main window**, drops into the
+**playback core** (a pure queue engine wrapped by a thin Qt backend), fans out
+to **isolated thread pools** so heavy network work never touches the GUI loop,
+resolves through the **catalog** (guest API, link parsing, exponential retry
+backoff, loudness hints), and finally lands on the **sources** — `yt-dlp` for
+streams, YT Music's guest API for search, radio and lyrics. Your data never
+leaves the machine: SQLite keeps favorites, history and playlists, QSettings
+keeps the knobs.
 
 ```mermaid
 flowchart LR
-    A["🔍 Search / Paste a Link"] --> B["SearchJob<br/>background pool"]
-    B --> C["Results / Album rows"]
-    C -->|pick| D["PlaybackCore<br/>queue engine"]
-    D --> E["LoadJob<br/>playback pool"]
-    E -->|resolved URL + loudness| F["QMediaPlayer<br/>instant playback"]
-    F --> G["SQLite history"]
-    F --> H["Now-Playing view"]
-    F --> I["Toast"]
+    A["🔍 Search / paste a link"] --> B["SearchJob<br/>(background pool)"]
+    B --> C["Results"]
+    C -->|pick| D["PlaybackCore<br/>+ QueueEngine"]
+    D --> E["LoadJob<br/>(playback pool)"]
+    E -->|"stream URL + loudness"| F["▶ QMediaPlayer"]
+    F --> G["SQLite history<br/>+ top tracks"]
+    D -->|"queue runs dry"| H["queue_dry"]
+    H --> I["RadioJob<br/>(watch graph)"]
+    I -->|"autoplay refill"| D
+    C --> J["LyricsJob"] --> K["📝 Now Playing lyrics"]
 ```
 
-## 📻 The Radio Loop (Endless Autoplay)
+<details>
+<summary>🧊 About the 3D artwork</summary>
 
-Start Radio from any track — or just let the queue run dry with autoplay on.
-The radio engine quietly refills from the YT Music watch graph, dedupes
-against everything you've heard, and the music never stops:
+Both assets are committed SVGs rendered with isometric polygons, layered
+gradients and SMIL keyframe animations (`animate`, `animateTransform`), so they
+animate inside GitHub's sanitized `<img>` pipeline with **zero** JavaScript and
+**zero** third-party requests. Want them standalone? Open
+[`docs/assets/hero-3d.svg`](docs/assets/hero-3d.svg) or
+[`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg) in any browser and watch
+the equalizer dance and the stack hover in real time.
 
-```mermaid
-flowchart TD
-    S["🎧 seed track"] --> R["📻 Start Radio"]
-    R --> W["watch-graph fetch<br/>related tracks, retry backoff"]
-    W --> Q["queue = seed + fresh finds"]
-    Q --> P["▶ playback"]
-    P --> D{"queue dry?<br/>(repeat off)"}
-    D -- "♾️ autoplay on" --> F["auto-refill + dedupe<br/>vs history & upcoming"]
-    F --> P
-    D -- "no" --> P
-```
-
-## 🐍 The Firekeeper
-
-The snake is fed by every real commit on `main` — it patrols the contribution
-grid so the fire stays warm:
-
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake-dark.svg" />
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" />
-  <img alt="firekeeper snake eating the contribution grid" src="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" width="100%" />
-</picture>
-
-## 📊 Pulse
-
-<div align="center">
-  <img height="150" src="https://github-readme-stats.vercel.app/api/pin/?username=qtjg&repo=hearth&theme=radical&hide_border=true" alt="hearth repo stats" />
-  &nbsp;&nbsp;
-  <img height="150" src="https://github-readme-stats.vercel.app/api/top-langs/?username=qtjg&layout=compact&theme=radical&hide_border=true&langs_count=6" alt="top languages" />
-</div>
+</details>
 
 ---
 
@@ -265,11 +222,11 @@ a conflict detector that flags duplicates and system-shortcut collisions
 
 ## 🗂️ Project Structure
 
-```text
+```
 hearth/
 ├── hearth/
-│   ├── app.py          → lifecycle, persistence, hotkeys, logging, radio wiring
-│   ├── catalog.py      → YT Music guest search, scopes, radio, lyrics, retry backoff
+│   ├── app.py          → lifecycle, persistence, hotkeys, logging
+│   ├── catalog.py      → YT Music guest search, link parsing, retry backoff
 │   ├── config.py       → palettes, tunables, hotkey defaults (single source of truth)
 │   ├── cover.py        → cover tiles: painted flame fallback + async album art
 │   ├── hotkeys.py      → conflict detection & override merging
@@ -277,14 +234,15 @@ hearth/
 │   ├── models.py       → Track dataclass & serialization
 │   ├── panel.py        → the floating ribbon (legacy companion UI)
 │   ├── player.py       → queue engine (pure) + lazy Qt Multimedia backend
-│   ├── share.py        → portable .hearthplaylist.json import / export codecs
-│   ├── storage.py      → SQLite favorites, history, playlists & play counts
+│   ├── share.py        → playlist JSON encode/decode for portable exports
+│   ├── storage.py      → SQLite favorites, history & playlists
 │   ├── stream.py       → yt-dlp resolver, format picker, loudness gain
 │   ├── theme.py        → stylesheets compiled from Palette tokens
 │   ├── toast.py        → non-focus-stealing now-playing toast
 │   ├── tray.py         → tray presence, painted icon, single-instance guard
-│   ├── window.py       → three-pane main window + Now Playing view
+│   ├── window.py       → the three-pane main window (sidebar/shelves/transport)
 │   └── utils.py        → small zero-dependency helpers
+├── docs/assets/        → animated 3D SVG artwork used by this README
 ├── tests/              → 155 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
@@ -296,10 +254,10 @@ hearth/
 
 ## 🧪 Testing
 
-155 tests cover models, palettes, playlists, storage, retry backoff, format
-picking, queue semantics, hotkey conflicts, the main window (views, player
-bar, queue dock, pin flow), radio / lyrics / autoplay flows, playlist share
-codecs, and the real app booting headless:
+155 tests cover models, palettes, playlists, share codecs, storage, retry
+backoff, format picking, queue semantics, radio + autoplay refill, lyrics
+caching, hotkey conflicts, the main window (views, player bar, queue dock with
+drag & drop, pin flow), and the real app booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -314,9 +272,8 @@ not just claimed.
 ## 🗺️ Roadmap
 
 - 🎨 Artist pages & mood shelves
-- 🎤 Synced (time-stamped) lyrics
-- 🖼️ Drag-and-drop playlist track reordering
 - 📦 AUR package publication
+- 🕓 Synced (time-cued) lyrics
 
 ---
 
@@ -326,6 +283,8 @@ not just claimed.
 
 <div align="center">
 
-<img src="https://capsule-render.vercel.app/api?type=cylinder&color=0:7C1D12,50:E8491D,100:FF6B35&height=130&section=footer&text=keep%20the%20fire%20warm%20🔥&fontSize=26&fontColor=fff8f2&animation=blinking&desc=♪%20♪%20♪&descSize=16&descColor=ffd9c2&descAlignY=78" width="100%" alt="footer"/>
+<img src="https://capsule-render.vercel.app/api?type=waving&height=110&color=0:7b2ff7,50:ff2d55,100:ff7a18&section=footer" width="100%" alt=""/>
+
+<sub><strong>Hearth</strong> — keep the fire warm. 🔥</sub>
 
 </div>
