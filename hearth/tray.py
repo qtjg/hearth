@@ -9,6 +9,8 @@ from PyQt6.QtGui import QAction, QIcon, QPixmap
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
 
+from .config import Palette, get_palette
+
 log = logging.getLogger(__name__)
 
 INSTANCE_KEY = "hearth-single-instance"
@@ -27,6 +29,30 @@ def paint_icon(char: str = "🔥", bg: str = "#1d1712", fg: str = "#f0a437") -> 
     font.setPixelSize(44)
     painter.setFont(font)
     painter.drawText(pixmap.rect(), 0x0084, char)  # AlignCenter
+    painter.end()
+    return QIcon(pixmap)
+
+
+def hearth_mark(palette: Palette | None = None) -> QIcon:
+    """The hearth mark — flame glyph over a warm shell-gradient backdrop.
+
+    Palette-aware: pass the active palette to tint the tile, or None to
+    use the default scheme.
+    """
+    from PyQt6.QtGui import QColor, QFont, QLinearGradient, QPainter
+
+    p = palette if palette is not None else get_palette(None)
+    pixmap = QPixmap(64, 64)
+    backdrop = QLinearGradient(0.0, 0.0, 0.0, 64.0)
+    backdrop.setColorAt(0.0, QColor(p.surface))
+    backdrop.setColorAt(1.0, QColor(p.surface_alt))
+    painter = QPainter(pixmap)
+    painter.fillRect(pixmap.rect(), backdrop)
+    painter.setPen(QColor(p.accent))
+    font = QFont()
+    font.setPixelSize(44)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), 0x0084, "🔥")  # AlignCenter
     painter.end()
     return QIcon(pixmap)
 
@@ -59,7 +85,7 @@ class HearthTray(QSystemTrayIcon):
 
     def __init__(self, actions: dict[str, QAction] | None = None,
                  menus: list[QMenu] | None = None, parent=None):
-        super().__init__(paint_icon(), parent)
+        super().__init__(hearth_mark(), parent)
         self.setToolTip("🔥 Hearth — keep the fire warm")
         menu = QMenu()
         if actions:

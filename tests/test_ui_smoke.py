@@ -6,7 +6,7 @@ from hearth.config import get_palette
 from hearth.panel import EqBars, FloatingPanel, SpringPhysics
 from hearth.theme import build_stylesheet
 from hearth.toast import NowPlayingToast
-from hearth.tray import InstanceGuard, paint_icon
+from hearth.tray import InstanceGuard, hearth_mark, paint_icon
 
 from .test_models import make_track
 
@@ -88,6 +88,18 @@ def test_toast_builds_and_announces(qapp):
 
 def test_paint_icon_returns_icon(qapp):
     icon = paint_icon()
+    assert not icon.isNull()
+
+
+def test_hearth_mark_returns_icon(qapp):
+    icon = hearth_mark()
+    assert not icon.isNull()
+
+
+def test_hearth_mark_with_explicit_palette(qapp):
+    # Regression: the mark must read colors off a palette *instance*,
+    # never off the Palette class (NameError/AttributeError guard).
+    icon = hearth_mark(get_palette("frost"))
     assert not icon.isNull()
 
 
