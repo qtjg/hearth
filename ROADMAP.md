@@ -17,7 +17,7 @@
 | v0.6.0 | The wide world | Discover (charts / moods / ~280 playlists) + World Explorer (74 genre stations) |
 | v0.6.1 | The spotlight | **artist pages** (face, top tracks, releases, kindred acts) + **synced lyrics** (LRCLIB, glowing line, click-to-seek) |
 
-245 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
+254 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.
 
 ---

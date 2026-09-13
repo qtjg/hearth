@@ -4,11 +4,12 @@
 
 <img src="docs/assets/hero-3d.svg" width="100%" alt="Hearth — a cozy three-pane desktop player for YouTube Music"/>
 
-<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Endless+radio+%C2%B7+synced+lyrics+%C2%B7+drag-and-drop+queue;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
+<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-245%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![tests](https://img.shields.io/badge/tests-254%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
 ![version](https://img.shields.io/badge/version-v0.6.1-ff7a18?style=flat-square)
+![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-8b949e?style=flat-square)
@@ -20,11 +21,18 @@
 
 </div>
 
+<details open>
+<summary><strong>📑 Jump around</strong> — the whole README, indexed</summary>
+
+[🧊 The System, in 3D](#-the-system-in-3d) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
+
+</details>
+
 ---
 
 ## 🧊 The System, in 3D
 
-Both diagrams below are hand-built, zero-dependency animated SVGs (pure SMIL —
+Every diagram below is hand-built, zero-dependency animated SVG (pure SMIL —
 no JavaScript, no external services) living in
 [`docs/assets/`](docs/assets/). They float, glow, and flow directly on GitHub —
 zoom in, they're lossless at any size.
@@ -58,13 +66,16 @@ flowchart LR
 <details>
 <summary>🧊 About the 3D artwork</summary>
 
-Both assets are committed SVGs rendered with isometric polygons, layered
-gradients and SMIL keyframe animations (`animate`, `animateTransform`), so they
-animate inside GitHub's sanitized `<img>` pipeline with **zero** JavaScript and
-**zero** third-party requests. Want them standalone? Open
-[`docs/assets/hero-3d.svg`](docs/assets/hero-3d.svg) or
-[`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg) in any browser and watch
-the equalizer dance and the stack hover in real time.
+All of them are committed SVGs rendered with isometric polygons, layered
+gradients and SMIL keyframe animations (`animate`, `animateTransform`,
+`animateMotion`), so they animate inside GitHub's sanitized `<img>` pipeline
+with **zero** JavaScript and **zero** third-party requests. Want them
+standalone? Open
+[`docs/assets/hero-3d.svg`](docs/assets/hero-3d.svg),
+[`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg) or
+[`docs/assets/spotlight-3d.svg`](docs/assets/spotlight-3d.svg) in any browser
+and watch the equalizer dance, the stack hover and the lyric beam flow in
+real time.
 
 </details>
 
@@ -83,10 +94,43 @@ GitHub theme:
 
 ---
 
+## 📸 Inside the Hearth
+
+Real pixels, not mockups — captured from the app itself (headless offscreen
+render) with a little fictional demo data:
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/shots/discover.png" alt="Discover tab: chips for Charts, New releases, Trending and New videos over a grid of mood playlist cards" /><br/>
+      <sub>🧭 <b>Discover</b> — charts, moods & shelves, zero typing</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/shots/world.png" alt="World Explorer tab: region groups of genre station chips with a filter box and a Surprise me button" /><br/>
+      <sub>🗺️ <b>World Explorer</b> — 74 stations across nine regions</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="docs/assets/shots/artist.png" alt="Artist page: avatar, subscriber count and description, top tracks list, album cover cards" /><br/>
+      <sub>🎤 <b>Spotlight</b> — an artist page: face, story, top tracks</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="docs/assets/shots/lyrics.png" alt="Now Playing: big cover with a floor reflection on the left, synced lyrics on the right with one glowing line" /><br/>
+      <sub>✨ <b>Synced lyrics</b> — the current line glows; click any line to seek</sub>
+    </td>
+  </tr>
+</table>
+
+---
+
 ## 🎤 Spotlight — Artist Pages & Words That Keep the Beat (v0.6.1)
 
 Two long-requested upgrades land together: every artist gets a stage, and
-every lyric line gets its moment.
+every lyric line gets its moment. The whole spotlight system, in one moving
+picture:
+
+<img src="docs/assets/spotlight-3d.svg" width="100%" alt="Isometric 3D diagram: an artist stage with a floating avatar on the left, a synced lyric tower with a glowing active line on the right, an LRCLIB beam feeding the lyrics, and a click-a-line seek arrow flowing back"/>
 
 - **🎤 Artist pages** — right-click any track → *🎤 Artist page* (it works
   from album pages and related-artist chips too): a real artist stage with
@@ -105,6 +149,20 @@ every lyric line gets its moment.
 - **🖼️ Banner art** — the README now opens on a cinematic 3D cover: the
   fireplace, equalizer flames, floating notes and a vinyl — hearth's whole
   personality in one image.
+
+The lyrics ladder, end to end — and playback never waits on it:
+
+```mermaid
+flowchart LR
+    T["▶ track loads"] --> S1["LRCLIB /get<br/>title + artist + album"]
+    S1 -->|exact hit| G["✨ synced sheet:<br/>glowing line · click to seek"]
+    S1 -->|miss| S2["LRCLIB /search<br/>closest duration"]
+    S2 -->|hit| G
+    S2 -->|miss| S3["search by artist name"]
+    S3 -->|hit| G
+    S3 -->|miss| P["📝 plain text:<br/>LRCLIB → YT Music catalogue"]
+    P -->|nothing at all| N["🕯️ the cozy no-lyrics note"]
+```
 
 ## 🖼️ The Big Window (v0.3)
 
@@ -207,7 +265,37 @@ every visit), instant queue-up. **🔎 Filter** the dial ("africa", "metal",
 **🔍 Search-everywhere fallback:** when the guest catalogue has never heard
 of a track — rare live cuts, B-sides, regional uploads — hearth falls back
 to the web (songs → videos → yt-dlp's index), so "we can't find it" comes
-as close to impossible as a player can get.
+as close to impossible as a player can get:
+
+```mermaid
+flowchart TD
+    Q["🎲 a station seed or a rare track"] --> A["🎵 YT Music · songs search"]
+    A -->|hit| D["▶ straight into the queue"]
+    A -->|miss| B["▶ videos search"]
+    B -->|hit| D
+    B -->|miss| C["🌐 the yt-dlp web index"]
+    C -->|hit| D
+    C -->|miss| E["🕯️ as close to impossible as a player can get"]
+```
+
+## 🧭 How Hearth Grew
+
+Five ships, five waves — each one a full layer of the app:
+
+| Version | Wave | What landed |
+|:---|:---|:---|
+| v0.3 | 🖼️ The Big Window | three panes, playlists, queue drawer, tray presence |
+| v0.4 | 📻 Radio & Words | Now Playing page, Start Radio, endless autoplay, library backup |
+| v0.5 | 🔍 Scopes & Shortcuts | search scopes, album pages, top tracks, in-window hotkeys |
+| v0.6 | 🌍 Discover + 🗺️ World Explorer | the whole YT Music catalogue + a 74-station world dial |
+| **v0.6.1** | 🎤 Spotlight | artist pages, synced lyrics, banner art — **current release** |
+
+**New here? A 60-second tour of the new stuff:** open 🧭 **Discover** and tap
+a mood → hop to 🗺️ **World** and hit **🎲 Surprise me** → right-click any
+track and choose **🎤 Artist page** → press `N` for the Now Playing stage and
+watch the ✨ lyric lines glow in time — click one to send the song there.
+
+---
 
 ## ✨ What It Does
 
@@ -227,10 +315,10 @@ as close to impossible as a player can get.
 | 🖥️ **Tray presence** | Play, pause, skip, or summon the window from the system tray; a second launch just wakes the first |
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
 | 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
-| 🌍 **Discover the world** | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
-| 🗺️ **World Explorer** | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
-| 🎤 **Artist pages** | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
-| ✨ **Synced lyrics** | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
+| 🌍 **Discover the world** 🆕 | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
+| 🗺️ **World Explorer** 🆕 | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
+| 🎤 **Artist pages** 🆕 | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
+| ✨ **Synced lyrics** 🆕 | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
 | 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, autoplay, favorites, playlists, and history persist |
@@ -338,8 +426,8 @@ hearth/
 │   ├── world.py        → the 74-genre World Explorer universe (pure data)
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
-├── docs/assets/        → animated 3D SVG artwork + banner art used by this README
-├── tests/              → 245 headless tests (offscreen Qt platform)
+├── docs/assets/        → animated 3D SVG artwork, banner art & screenshots used by this README
+├── tests/              → 254 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -350,7 +438,7 @@ hearth/
 
 ## 🧪 Testing
 
-245 tests cover models, palettes, playlists, share codecs, storage, retry
+254 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
 caching, LRC parsing, the LRCLIB fallback ladder, artist-page mapping
 (catalogue, jobs, view, app drill-down), hotkey conflicts, the genre
