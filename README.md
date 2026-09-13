@@ -66,6 +66,19 @@ the equalizer dance and the stack hover in real time.
 
 </details>
 
+## 🐍 The Firekeeper Snake
+
+Every six hours a scheduled action feeds qtjg's contribution graph to a snake,
+and it slithers through every green square it has earned. Light and dark
+variants land on the `output` branch and swap automatically to match your
+GitHub theme:
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake-dark.svg"/>
+  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg"/>
+  <img src="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" width="100%" alt="Contribution graph snake"/>
+</picture>
+
 ---
 
 ## 🖼️ The Big Window (v0.3)
@@ -274,6 +287,16 @@ not just claimed.
 - 🎨 Artist pages & mood shelves
 - 📦 AUR package publication
 - 🕓 Synced (time-cued) lyrics
+
+---
+
+<details>
+<summary>📈 Repo stats</summary>
+
+<a href="https://github.com/qtjg/hearth"><img src="https://github-readme-stats.vercel.app/api/pin/?username=qtjg&repo=hearth&theme=github_dark_orange&show_icons=true" height="160" alt="hearth repo stats"/></a>
+<img src="https://github-readme-stats.vercel.app/api/top-langs/?username=qtjg&layout=compact&theme=github_dark_orange" height="160" alt="top languages"/>
+
+</details>
 
 ---
 
