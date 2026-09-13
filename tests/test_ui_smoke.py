@@ -1,7 +1,6 @@
 """Smoke tests: the real UI builds and repaints headless (offscreen)."""
 
 import pytest
-from PyQt6.QtCore import QEventLoop, QTimer
 from PyQt6.QtGui import QColor, QPixmap
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QGraphicsOpacityEffect, QLabel
 
@@ -193,12 +192,15 @@ def test_glow_attaches_and_fade_settles(qapp):
     ramp = plain.graphicsEffect()._hearth_ramp
     ramp.setCurrentTime(ramp.totalDuration())
     assert plain.graphicsEffect().opacity() == pytest.approx(1.0)
-    # and the ramp genuinely animates: a short real-time stretch moves it
-    # strictly past the start value (loose bound — CI clocks are rough)
+    # and the ramp genuinely animates: jump the clock to its midpoint and
+    # the opacity must sit strictly between the endpoints — fully
+    # deterministic, no wall-clock sampling (slow Windows CI runners taught
+    # us that one the hard way)
     fade_in(plain, ms=60)
-    _pump(qapp, 120)
+    ramp = plain.graphicsEffect()._hearth_ramp
+    ramp.setCurrentTime(ramp.totalDuration() // 2)
     moving = plain.graphicsEffect().opacity()
-    assert 0.0 < moving <= 1.0
+    assert 0.0 < moving < 1.0
 
 
 def test_cover_tile_frames_art_and_announces(qapp):
