@@ -1,17 +1,29 @@
-"""Stylesheets compiled from Palette tokens via string.Template.
+"""Stylesheets, palette packs, and lyrics typography.
 
 The 2020s layer: every flat fill from the last decade gets depth —
 vertical gradients, glassy surfaces, soft hairlines, accent glows.
 All extra tones are derived from the Palette at compile time, so every
 theme inherits the modern look without new color tokens.
+
+Palettes are portable too: a pack is one small JSON file ({key, label,
+color fields}) that anyone can drop into their hearth.
 """
 
 from __future__ import annotations
 
+import json
+import logging
+from dataclasses import replace
+from pathlib import Path
 from string import Template
 
+from PyQt6.QtGui import QFont
+
+from . import config
 from .config import Palette
 from .utils import mix as _mix
+
+log = logging.getLogger(__name__)
 
 _FONT_STACK = (
     '"Segoe UI Variable Display", "Segoe UI", Inter, "SF Pro Display", '
@@ -245,3 +257,97 @@ def build_stylesheet(p: Palette) -> str:
         success=p.success, selection=p.selection, scroll=p.scroll,
         **derived,
     )
+
+
+# ----------------------------------------------------------------- palette packs
+
+_PALETTE_PACK_FORMAT = "hearth-palette"
+
+
+def palette_to_dict(p: Palette) -> dict:
+    """A Palette as a portable pack dict ({key, label, color fields})."""
+    payload: dict = {"format": _PALETTE_PACK_FORMAT,
+                     "key": p.key, "label": p.label}
+    for name in p.__dataclass_fields__:
+        if name not in ("key", "label"):
+            payload[name] = getattr(p, name)
+    return payload
+
+
+def _palette_from_dict(data: dict) -> Palette | None:
+    """Rebuild a Palette from a pack dict; None when anything is off."""
+    if not isinstance(data, dict):
+        return None
+    known = {f for f in Palette.__dataclass_fields__ if f != "key"}
+    fields = {name: data.get(name) for name in ("key", *known)}
+    if any(not isinstance(v, str) for v in fields.values()):
+        return None
+    try:
+        return Palette(**fields)  # type: ignore[arg-type]
+    except TypeError:
+        return None
+
+
+def register_custom_palette(pal: Palette) -> str | None:
+    """Merge a palette into config.PALETTES at runtime, returning its key.
+
+    Built-in keys are sacred: a colliding import gets a "-2" (then -3, …)
+    suffix instead. A key that was itself imported earlier is deduped by
+    being replaced in place. Returns None if the palette doesn't validate.
+    """
+    if config.validate_palette(pal):
+        return None
+    candidate = pal.key
+    if candidate in config.BUILTIN_PALETTE_KEYS:
+        n = 1
+        while candidate in config.PALETTES:
+            n += 1
+            candidate = f"{pal.key}-{n}"
+    config.PALETTES[candidate] = replace(pal, key=candidate)
+    return candidate
+
+
+def export_palette(key: str, path) -> bool:
+    """Write palette `key` to `path` as a JSON pack. False on any trouble."""
+    pal = config.PALETTES.get(key)
+    if pal is None or config.validate_palette(pal):
+        return False
+    try:
+        payload = json.dumps(palette_to_dict(pal), ensure_ascii=False, indent=2)
+        Path(path).write_text(payload, encoding="utf-8")
+    except (OSError, TypeError, ValueError):
+        log.info("palette export failed for %s", key, exc_info=True)
+        return False
+    return True
+
+
+def import_palette(path) -> str | None:
+    """Load a JSON palette pack and merge it in. Returns the effective key.
+
+    Never raises: unreadable files, bad JSON, missing fields, or a palette
+    that fails config.validate_palette all return None.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("format") not in (None, _PALETTE_PACK_FORMAT):
+        return None
+    pal = _palette_from_dict(data)
+    if pal is None:
+        return None
+    return register_custom_palette(pal)
+
+
+# ----------------------------------------------------------------- lyrics type
+
+def lyrics_font(size_key: str, family: str = "") -> QFont:
+    """The lyrics typeface: pixel size from the S/M/L presets (unknown key
+    falls back to the default), family applied when given."""
+    presets = config.LYRICS_SIZE_PRESETS
+    px = presets.get(size_key, presets[config.LYRICS_DEFAULT_SIZE_KEY])
+    font = QFont()
+    font.setPixelSize(px)
+    if family:
+        font.setFamily(family)
+    return font

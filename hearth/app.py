@@ -27,10 +27,13 @@ from .jobs import (
     SearchJob,
     WorldJob,
 )
+from .lyrics import SyncedLyrics
+from .lyrics_overlay import LyricsOverlay
 from .models import Album, Artist, Collection, Track
 from .panel import FloatingPanel
 from .player import PlaybackCore
 from .storage import HearthStore
+from .theme import lyrics_font
 from .toast import NowPlayingToast
 from .tray import HearthTray, InstanceGuard
 from .window import MainWindow
@@ -175,6 +178,12 @@ class Hearth:
         self.core = PlaybackCore(self.qapp)
         self.panel = FloatingPanel(palette_key)
         self.toast = NowPlayingToast(palette_key)
+        self.overlay = LyricsOverlay(palette_key)
+        # desktop lyrics state: the synced engine for the current track and
+        # the last line index we pushed (so each tick stays a cheap no-op)
+        self._lyrics_engine: SyncedLyrics | None = None
+        self._overlay_index = -2
+        self._overlay_on = bool(config.LYRICS_OVERLAY_ENABLED)
         self.window = MainWindow(palette_key, store=self.store)
         self.tray: HearthTray | None = None
 
@@ -238,6 +247,7 @@ class Hearth:
         w.repeat_requested.connect(self._cycle_repeat)
         w.volume_changed.connect(self.core.set_volume)
         w.seek_requested.connect(self.core.seek)
+        w.now_view.lyrics_font_changed.connect(self._on_lyrics_font_changed)
         w.refresh_playlists()
 
     def _wire_core(self) -> None:
@@ -255,6 +265,7 @@ class Hearth:
         self.core.rate_changed.connect(lambda r: self._persist())
         self.core.queue_dry.connect(self._on_queue_dry)
         self.core.stream_lost.connect(self._on_stream_lost)
+        self.core.position_changed.connect(self._push_overlay_line)
         self.core.rate_changed.connect(
             lambda r: self.window.player_bar.set_speed_label(r)
         )
@@ -269,6 +280,10 @@ class Hearth:
             "prev": self._make_action("Previous", self.core.previous),
             "show": self._make_action("Show Hearth", self._summon),
         }
+        lyrics_act = self._make_action("🪧 Desktop lyrics", self._toggle_overlay)
+        lyrics_act.setCheckable(True)
+        lyrics_act.setChecked(self._overlay_on)
+        actions["lyrics"] = lyrics_act
         sleep_menu = QMenu("⏾ Sleep timer")
         for label, minutes in (("Off", 0), ("15 minutes", 15),
                                ("30 minutes", 30), ("45 minutes", 45), ("60 minutes", 60)):
@@ -695,6 +710,10 @@ class Hearth:
         )
         self.store.log_play(track)
         self._persist()
+        # desktop lyrics: a new song means a fresh, empty strip
+        self._lyrics_engine = None
+        self._overlay_index = -2
+        self.overlay.clear()
         if track is None:
             return
         self.toast.announce(track)
@@ -810,7 +829,8 @@ class Hearth:
         cached = self._lyrics_cache.get(track.video_id)
         if cached is not None:
             plain, lines = cached
-            self.window.now_view.set_lyrics(track.video_id, plain, lines)
+            self.window.set_lyrics(track.video_id, plain, lines)
+            self._set_overlay_engine(track.video_id, lines)
             return
         if len(self._lyrics_cache) > 200:
             self._lyrics_cache.clear()
@@ -822,7 +842,48 @@ class Hearth:
     def _on_lyrics_ready(self, payload) -> None:
         video_id, plain, lines = payload
         self._lyrics_cache[video_id] = (plain, lines)
-        self.window.now_view.set_lyrics(video_id, plain, lines)
+        self.window.set_lyrics(video_id, plain, lines)
+        self._set_overlay_engine(video_id, lines)
+
+    # --- desktop lyrics overlay (v0.8.0) ---
+
+    def _set_overlay_engine(self, video_id: str, lines) -> None:
+        """Feed the overlay's timeline, but only for the track still playing."""
+        current = self.core.engine.current
+        if lines and current is not None and current.video_id == video_id:
+            self._lyrics_engine = SyncedLyrics(list(lines))
+
+    def _toggle_overlay(self) -> None:
+        """Tray toggle for the desktop lyric strip (never raises)."""
+        self._overlay_on = not self._overlay_on
+        self.overlay.toggle()
+
+    def _on_lyrics_font_changed(self, size_key: str, family: str) -> None:
+        """The Now Playing row changed the lyrics type: persist + spread it."""
+        self.settings.setValue("lyrics/size", size_key)
+        self.settings.setValue("lyrics/family", family)
+        font = lyrics_font(size_key, family)
+        self.window.theater_view.apply_lyrics_font(font)
+        self.overlay.apply_font(font)
+
+    def _push_overlay_line(self, position_ms: int) -> None:
+        """Position tick → the strip, only when enabled, visible and synced."""
+        if not self._overlay_on or not self.overlay.isVisible():
+            return
+        engine = self._lyrics_engine
+        if engine is None or engine.empty:
+            return
+        index = engine.line_at(position_ms)
+        if index == self._overlay_index:
+            return
+        self._overlay_index = index
+        if 0 <= index < len(engine.lines):
+            next_text = ""
+            if index + 1 < len(engine.lines):
+                next_text = engine.lines[index + 1].text
+            self.overlay.show_line(engine.lines[index].text, next_text)
+        else:
+            self.overlay.clear()
 
     def _summon(self) -> None:
         if self.ui_mode == "window":
@@ -868,6 +929,13 @@ class Hearth:
             autoplay in (True, "true", "True", "1", 1)
             if isinstance(autoplay, (str, int)) else bool(autoplay)
         )
+        # lyrics settings: size preset + family for every lyric surface
+        size_key = str(self.settings.value("lyrics/size",
+                                           config.LYRICS_DEFAULT_SIZE_KEY))
+        family = str(self.settings.value("lyrics/family", ""))
+        self.window.set_lyrics_font(lyrics_font(size_key, family),
+                                    size_key, family)
+        self.overlay.apply_font(lyrics_font(size_key, family))
 
     def _restore_session(self) -> None:
         pos = self.settings.value("geometry/pos")

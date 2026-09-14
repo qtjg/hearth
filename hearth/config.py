@@ -111,6 +111,12 @@ LYRICS_OVERLAY_ENABLED = False  # frameless always-on-top lyric strip (opt-in)
 THEATER_ENABLED = True          # full-screen Now Playing mode
 VISUALIZER_BARS = 24            # mini-visualizer bar count in the player bar
 ALARM_DEFAULT_MINUTES = 30      # wake-up alarm default lead time
+THEATER_COVER = 380             # giant cover side inside theater mode
+
+# --- v0.8.0: lyrics settings (font presets for Now Playing + the overlay) ---
+LYRICS_SIZE_PRESETS = {"S": 20, "M": 28, "L": 40}   # px per S/M/L key
+LYRICS_DEFAULT_SIZE_KEY = "M"                        # fallback when unset/unknown
+LYRICS_FONT_FAMILIES = ("Segoe UI", "Inter", "Georgia", "Consolas")
 
 # --- v1.0.0 groundwork ---
 CROSSFADE_ENABLED = False       # opt-in dual-player crossfade
@@ -218,6 +224,9 @@ PALETTES: dict[str, Palette] = {
 }
 
 DEFAULT_PALETTE = "grove"
+
+# Keys shipped with the app — imported packs may never overwrite these.
+BUILTIN_PALETTE_KEYS = frozenset(PALETTES)
 
 
 def get_palette(key: str | None) -> Palette:

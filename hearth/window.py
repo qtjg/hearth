@@ -9,6 +9,7 @@ active Palette — no assets, no third-party marks.
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
@@ -16,6 +17,9 @@ from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QColorDialog,
+    QComboBox,
+    QDialog,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
@@ -49,7 +53,12 @@ from .effects import (
 from .lyrics import LrcLine, SyncedLyrics
 from .models import Album, Artist, Track
 from .storage import HearthStore
-from .theme import build_stylesheet
+from .theme import (
+    build_stylesheet,
+    export_palette,
+    lyrics_font,
+    register_custom_palette,
+)
 from .utils import clock
 
 
@@ -1006,6 +1015,7 @@ class LyricsSheet(QWidget):
         self._palette = palette
         self._sync: SyncedLyrics | None = None
         self._active = -2                       # -2 = nothing highlighted yet
+        self._lyric_font = lyrics_font(config.LYRICS_DEFAULT_SIZE_KEY)
 
         pages = QStackedLayout(self)
         pages.setContentsMargins(0, 0, 0, 0)
@@ -1056,9 +1066,7 @@ class LyricsSheet(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, line.time_ms)
             item.setToolTip(clock(line.time_ms))
             item.setForeground(dim)
-            font = QFont()
-            font.setPixelSize(15)
-            item.setFont(font)
+            item.setFont(self._lyric_font)
             self._sheet.addItem(item)
         self._pages.setCurrentWidget(self._sheet)
 
@@ -1076,16 +1084,14 @@ class LyricsSheet(QWidget):
     def _activate(self, index: int) -> None:
         if 0 <= self._active < self._sheet.count():
             prev = self._sheet.item(self._active)
-            font = prev.font()
-            font.setBold(False)
-            prev.setFont(font)
+            prev.setFont(self._lyric_font)
             prev.setForeground(QColor(self._palette.text_dim))
         self._active = index
         if 0 <= index < self._sheet.count():
             item = self._sheet.item(index)
-            font = item.font()
+            font = QFont(self._lyric_font)
             font.setBold(True)
-            font.setPixelSize(16)
+            font.setPixelSize(self._lyric_font.pixelSize() + 2)
             item.setFont(font)
             item.setForeground(QColor(self._palette.accent))
             self._sheet.scrollToItem(
@@ -1096,6 +1102,21 @@ class LyricsSheet(QWidget):
         ms = item.data(Qt.ItemDataRole.UserRole)
         if isinstance(ms, int):
             self.line_clicked.emit(ms)
+
+    def apply_lyrics_font(self, font: QFont) -> None:
+        """Apply the lyrics settings typeface to every line, live."""
+        self._lyric_font = QFont(font)
+        if self._sync is None:
+            return
+        for index in range(self._sheet.count()):
+            item = self._sheet.item(index)
+            if index == self._active:
+                active = QFont(self._lyric_font)
+                active.setBold(True)
+                active.setPixelSize(self._lyric_font.pixelSize() + 2)
+                item.setFont(active)
+            else:
+                item.setFont(self._lyric_font)
 
     def apply_palette(self, palette: Palette) -> None:
         self._palette = palette
@@ -1117,6 +1138,7 @@ class NowView(QWidget):
     pin_toggled = pyqtSignal()
     radio_requested = pyqtSignal()
     lyrics_seek_requested = pyqtSignal(int)   # ms — click a lyric line, go there
+    lyrics_font_changed = pyqtSignal(str, str)  # size key (S/M/L), family
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -1176,11 +1198,37 @@ class NowView(QWidget):
 
         right = QVBoxLayout()
         right.setSpacing(6)
+        cap_row = QHBoxLayout()
+        cap_row.setSpacing(6)
         cap = QLabel("LYRICS")
         cap.setProperty("dim", True)
         self._lyrics = LyricsSheet(palette)
         self._lyrics.line_clicked.connect(self.lyrics_seek_requested.emit)
-        right.addWidget(cap)
+        cap_row.addWidget(cap)
+        cap_row.addStretch(1)
+        # --- lyrics settings row: family + S/M/L size presets (v0.8.0) ---
+        self._size_key = config.LYRICS_DEFAULT_SIZE_KEY
+        self._family_box = QComboBox()
+        self._family_box.addItems(config.LYRICS_FONT_FAMILIES)
+        self._family_box.setToolTip("Lyrics font")
+        self._family_box.activated.connect(
+            lambda _i: self._emit_lyrics_font()
+        )
+        cap_row.addWidget(self._family_box)
+        self._size_chips: dict[str, QPushButton] = {}
+        for key in config.LYRICS_SIZE_PRESETS:
+            chip = QPushButton(key)
+            chip.setProperty("chip", True)
+            chip.setCheckable(True)
+            chip.setFixedWidth(34)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setToolTip(f"Lyrics size {key} — "
+                            f"{config.LYRICS_SIZE_PRESETS[key]}px")
+            chip.clicked.connect(lambda _=False, k=key: self.set_lyrics_size(k))
+            self._size_chips[key] = chip
+            cap_row.addWidget(chip)
+        self._sync_size_chips()
+        right.addLayout(cap_row)
         right.addWidget(self._lyrics, 1)
 
         body.addLayout(left, 1)
@@ -1241,6 +1289,217 @@ class NowView(QWidget):
         self._cover.apply_palette(palette)
         self._lyrics.apply_palette(palette)
         set_glow_color(self._cover_glow, palette.accent, alpha=120)
+
+    @property
+    def current_track(self) -> Track | None:
+        return self._track
+
+    def cover_pixmap(self):
+        """The current cover art (theater mode reuses it as its giant copy)."""
+        return self._cover.pixmap()
+
+    # --- lyrics settings row (v0.8.0) ---
+
+    def set_lyrics_size(self, key: str) -> None:
+        """Pick an S/M/L preset and apply it (emits lyrics_font_changed)."""
+        if key not in self._size_chips:
+            return
+        self._size_key = key
+        self._sync_size_chips()
+        self._emit_lyrics_font()
+
+    def set_lyrics_settings(self, size_key: str, family: str) -> None:
+        """Restore persisted settings silently (no signal — app already knows)."""
+        if size_key in self._size_chips:
+            self._size_key = size_key
+        self._sync_size_chips()
+        if family and self._family_box.findText(family) >= 0:
+            self._family_box.setCurrentText(family)
+        self.apply_lyrics_font(lyrics_font(self._size_key,
+                                           self._family_box.currentText()))
+
+    def apply_lyrics_font(self, font: QFont) -> None:
+        self._lyrics.apply_lyrics_font(font)
+
+    @property
+    def lyrics_size_key(self) -> str:
+        return self._size_key
+
+    def _sync_size_chips(self) -> None:
+        for key, chip in self._size_chips.items():
+            chip.setChecked(key == self._size_key)
+
+    def _emit_lyrics_font(self) -> None:
+        """Apply locally, then tell the app (it persists + spreads the rest)."""
+        family = self._family_box.currentText()
+        self._lyrics.apply_lyrics_font(lyrics_font(self._size_key, family))
+        self.lyrics_font_changed.emit(self._size_key, family)
+
+
+class TheaterView(QWidget):
+    """Full-screen Now Playing: the giant, glowing end of the stage.
+
+    A pure VIEW over the state the main window already holds — the same
+    track, the same lyric tick, zero playback logic. Esc or the ✕ walks
+    you back to the regular room.
+    """
+
+    exit_requested = pyqtSignal()
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._track: Track | None = None
+        self._video_id: str = ""
+        self._sync: SyncedLyrics | None = None
+        self._active = -2
+        self._lyric_font = lyrics_font(config.LYRICS_DEFAULT_SIZE_KEY)
+        self.setStyleSheet(build_stylesheet(palette))
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(48, 32, 48, 36)
+        outer.setSpacing(18)
+
+        top = QHBoxLayout()
+        mark = QLabel(f"🔥 {config.APP_NAME} theater")
+        mark.setProperty("kicker", True)
+        top.addWidget(mark)
+        top.addStretch(1)
+        self._close = QPushButton("✕  Exit (Esc)")
+        self._close.setProperty("flat", True)
+        self._close.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._close.clicked.connect(self.exit_requested.emit)
+        top.addWidget(self._close)
+        outer.addLayout(top)
+
+        self._cover = CoverTile(palette, config.THEATER_COVER)
+        self._cover_glow = add_glow(self._cover, palette.accent, blur=90,
+                                    alpha=130)
+        outer.addWidget(self._cover, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        self._title = QLabel("Nothing playing")
+        self._title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._title.setWordWrap(True)
+        self._title.setStyleSheet("font-size: 34px; font-weight: 800;")
+        self._artist = QLabel("press Esc to step back into the room")
+        self._artist.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._artist.setProperty("dim", True)
+        outer.addWidget(self._title)
+        outer.addWidget(self._artist)
+
+        self._now = QLabel("♪")
+        self._now.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter)
+        self._now.setWordWrap(True)
+        self._now_glow = add_glow(self._now, palette.accent, blur=40, alpha=150)
+        self._next = QLabel("")
+        self._next.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        self._next.setWordWrap(True)
+        self._next.setProperty("dim", True)
+        outer.addWidget(self._now, 1)
+        outer.addWidget(self._next)
+        self.apply_lyrics_font(self._lyric_font)
+
+    # --- state in (mirrors the main window's Now Playing) ---
+
+    def set_track(self, track: Track | None) -> None:
+        self._track = track
+        if track is None:
+            self._video_id = ""
+            self._sync = None
+            self._active = -2
+            self._title.setText("Nothing playing")
+            self._artist.setText("press Esc to step back into the room")
+            self._cover.set_mark()
+            self._now.setText("♪")
+            self._next.setText("")
+            return
+        if track.video_id != self._video_id:
+            # a genuinely new song clears the timeline; re-settling the same
+            # one (theater re-entry) keeps already-arrived lyrics
+            self._sync = None
+            self._active = -2
+        self._video_id = track.video_id
+        self._title.setText(track.title)
+        self._artist.setText(track.artist)
+        if track.thumbnail:
+            self._cover.set_track_cover(track.thumbnail)
+        else:
+            self._cover.set_mark()
+
+    def set_cover_pixmap(self, pixmap) -> None:
+        """Adopt the Now Playing cover instantly (no re-download)."""
+        if pixmap is not None and not pixmap.isNull():
+            self._cover.setPixmap(pixmap)
+
+    def set_lyrics(self, video_id: str, text: str | None,
+                   lines: list[LrcLine] | None = None) -> None:
+        """Late-arriving lyrics; drop them if the track moved on meanwhile."""
+        if video_id != self._video_id:
+            return
+        if lines:
+            self._sync = SyncedLyrics(lines)
+        else:
+            self._sync = None
+        self._active = -2
+
+    def set_position(self, position_ms: int) -> None:
+        """Keep the giant line in step with the song (cheap: two labels)."""
+        if self._sync is None or self._sync.empty:
+            return
+        index = self._sync.line_at(position_ms)
+        if index == self._active:
+            return
+        self._active = index
+        if 0 <= index < len(self._sync.lines):
+            line = self._sync.lines[index]
+            self._now.setText(line.text or "♪")
+            if index + 1 < len(self._sync.lines):
+                self._next.setText(self._sync.lines[index + 1].text)
+            else:
+                self._next.setText("")
+        else:
+            self._now.setText("♪")
+            self._next.setText("")
+
+    def apply_lyrics_font(self, font: QFont) -> None:
+        """Scale the giant line from the shared lyrics settings."""
+        self._lyric_font = QFont(font)
+        px = max(18, font.pixelSize())
+        giant = QFont(font)
+        giant.setPixelSize(round(px * 1.6))
+        giant.setBold(True)
+        self._now.setFont(giant)
+        preview = QFont(font)
+        preview.setPixelSize(px)
+        preview.setBold(False)
+        self._next.setFont(preview)
+        # inline styles so the 13px app rule never shrinks the stage type
+        self._now.setStyleSheet(
+            f"color: {self._palette.accent}; background: transparent;"
+            f"font-size: {round(px * 1.6)}px; font-weight: 800;"
+        )
+        self._next.setStyleSheet(
+            f"color: {self._palette.text_dim}; background: transparent;"
+            f"font-size: {px}px;"
+        )
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self.setStyleSheet(build_stylesheet(palette))
+        self._cover.apply_palette(palette)
+        set_glow_color(self._cover_glow, palette.accent, alpha=130)
+        set_glow_color(self._now_glow, palette.accent, alpha=150)
+        self.apply_lyrics_font(self._lyric_font)
+        self.update()
+
+    # --- exit ---
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        if event.key() == Qt.Key.Key_Escape:
+            self.exit_requested.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     @property
     def current_track(self) -> Track | None:
@@ -1451,6 +1710,117 @@ class PlayerBar(QWidget):
 
 # ----------------------------------------------------------------- main window
 
+class AccentPickerDialog(QDialog):
+    """Tweak the current palette's accent/accent_soft, live.
+
+    A modest dialog: two pickers, a live swatch, and "save as pack" —
+    which writes the tweaked colors out as a portable JSON pack instead
+    of ever overwriting a built-in palette.
+    """
+
+    palette_changed = pyqtSignal(object)   # Palette — the live trial
+    pack_saved = pyqtSignal(str)           # effective key of the saved pack
+
+    FIELDS = ("accent", "accent_soft")
+
+    def __init__(self, palette: Palette, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🎨 Accent colors")
+        self.setMinimumWidth(340)
+        self._base = palette
+        self._palette = palette
+        self.saved = False
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(10)
+
+        self._preview = QLabel()
+        self._preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._preview.setFixedHeight(72)
+        lay.addWidget(self._preview)
+
+        picks = QHBoxLayout()
+        picks.setSpacing(8)
+        self._swatches: dict[str, QLabel] = {}
+        for field in self.FIELDS:
+            btn = QPushButton(f"🎨 Pick {field}…")
+            btn.clicked.connect(lambda _=False, f=field: self._pick(f))
+            picks.addWidget(btn)
+        lay.addLayout(picks)
+
+        self._swatch_row = QHBoxLayout()
+        for field in self.FIELDS:
+            swatch = QLabel(field)
+            swatch.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._swatches[field] = swatch
+            self._swatch_row.addWidget(swatch, 1)
+        lay.addLayout(self._swatch_row)
+
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        save = QPushButton("💾 Save as pack…")
+        save.setProperty("accent", True)
+        save.clicked.connect(self._save_pack)
+        reset = QPushButton("Reset")
+        reset.clicked.connect(self._reset)
+        row.addWidget(save, 1)
+        row.addWidget(reset)
+        close = QPushButton("Close")
+        close.clicked.connect(self.reject)
+        row.addWidget(close)
+        lay.addLayout(row)
+        self._refresh()
+
+    # --- internals ---
+
+    def _pick(self, field: str) -> None:
+        color = QColorDialog.getColor(
+            QColor(getattr(self._palette, field)), self, f"Pick {field}"
+        )
+        if not color.isValid():
+            return
+        self._palette = replace(self._palette, **{field: color.name()})
+        self._refresh()
+        self.palette_changed.emit(self._palette)
+
+    def _reset(self) -> None:
+        self._palette = self._base
+        self._refresh()
+        self.palette_changed.emit(self._palette)
+
+    def _save_pack(self) -> None:
+        key = register_custom_palette(self._palette)
+        if key is None:   # a trial of a valid palette always validates
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Save palette pack",
+            f"{key}.hearthpalette.json",
+            "Hearth palette pack (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        if export_palette(key, path):
+            self.saved = True
+            self.pack_saved.emit(key)
+            self.accept()
+
+    def _refresh(self) -> None:
+        p = self._palette
+        self._preview.setText("Aa  ♪  keep the fire warm")
+        self._preview.setStyleSheet(
+            f"background: {p.bg}; color: {p.text}; border: 1px solid {p.hairline};"
+            f"border-radius: 10px; font-size: 17px; font-weight: 700;"
+        )
+        for field in self.FIELDS:
+            swatch = self._swatches.get(field)
+            if swatch is not None:
+                swatch.setStyleSheet(
+                    f"background: {getattr(p, field)}; color: {p.bg};"
+                    f"border-radius: 8px; font-weight: 700; padding: 6px;"
+                )
+
+
+
 class MainWindow(QMainWindow):
     """Hearth, grown up: navigation, shelves, lists, and a real transport."""
 
@@ -1507,6 +1877,7 @@ class MainWindow(QMainWindow):
         self.album_view = AlbumView(self._palette)
         self.remote_playlist_view = RemotePlaylistView(self._palette)
         self.artist_view = ArtistView(self._palette)
+        self.theater_view = TheaterView(self._palette)   # full-screen stage
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.discover_view, self.world_view,
@@ -1534,6 +1905,7 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(build_stylesheet(self._palette))
         self._wire_internal()
         self._install_shortcuts()
+        self.theater_view.exit_requested.connect(self.toggle_theater)
         self.show_view("home")
 
     # --- construction bits ---
@@ -1567,6 +1939,14 @@ class MainWindow(QMainWindow):
             self._nav[key] = btn
             lay.addWidget(btn)
 
+        # Theater is an action, not a stack page: full-screen over everything.
+        if config.THEATER_ENABLED:
+            theater_btn = QPushButton("🎭 Theater")
+            theater_btn.setProperty("nav", True)
+            theater_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            theater_btn.clicked.connect(lambda _=False: self.toggle_theater())
+            lay.addWidget(theater_btn)
+
         head = QHBoxLayout()
         cap = QLabel("PLAYLISTS")
         cap.setProperty("dim", True)
@@ -1582,6 +1962,12 @@ class MainWindow(QMainWindow):
         imp.clicked.connect(self._import_playlists)
         head.addWidget(cap)
         head.addStretch(1)
+        accent_btn = QPushButton("🎨")
+        accent_btn.setProperty("flat", True)
+        accent_btn.setFixedWidth(30)
+        accent_btn.setToolTip("Accent colors (live preview)")
+        accent_btn.clicked.connect(self._open_accent_picker)
+        head.addWidget(accent_btn)
         head.addWidget(imp)
         head.addWidget(add)
         lay.addSpacing(12)
@@ -2122,6 +2508,7 @@ class MainWindow(QMainWindow):
     def set_track(self, track: Track | None) -> None:
         self.player_bar.set_track(track)
         self.now_view.set_track(track)
+        self.theater_view.set_track(track)
         if track is None:
             self.setWindowTitle(f"🔥 {config.APP_NAME} — {config.APP_TAGLINE}")
         else:
@@ -2137,12 +2524,25 @@ class MainWindow(QMainWindow):
     def set_status(self, text: str) -> None:
         self.player_bar.set_status(text)
 
+    def set_duration(self, duration_ms: int) -> None:
+        self.player_bar.set_duration(duration_ms)
+
     def set_position(self, position_ms: int) -> None:
         self.player_bar.set_position(position_ms)
         self.now_view.set_position(position_ms)
+        if self.theater_view.isVisible():
+            self.theater_view.set_position(position_ms)
 
-    def set_duration(self, duration_ms: int) -> None:
-        self.player_bar.set_duration(duration_ms)
+    def set_lyrics(self, video_id: str, text: str | None,
+                   lines: list[LrcLine] | None = None) -> None:
+        """Lyrics land in the Now Playing sheet and the theater at once."""
+        self.now_view.set_lyrics(video_id, text, lines)
+        self.theater_view.set_lyrics(video_id, text, lines)
+
+    def set_lyrics_font(self, font: QFont, size_key: str, family: str) -> None:
+        """Apply + remember the lyrics settings across every lyric surface."""
+        self.now_view.set_lyrics_settings(size_key, family)
+        self.theater_view.apply_lyrics_font(font)
 
     def set_volume(self, value: float) -> None:
         self.player_bar.set_volume(value)
@@ -2154,7 +2554,40 @@ class MainWindow(QMainWindow):
         self._palette = palette
         self.now_view.apply_palette(palette)
         self.player_bar.apply_palette(palette)
+        self.theater_view.apply_palette(palette)
         self.setStyleSheet(build_stylesheet(palette))
+
+    # --- theater mode (v0.8.0) ---
+
+    def toggle_theater(self) -> None:
+        """Flip the full-screen Now Playing stage (gated on config)."""
+        if not config.THEATER_ENABLED:
+            return
+        if self.theater_view.isVisible():
+            self.theater_view.hide()
+            self.show()
+            return
+        self.theater_view.set_track(self.now_view.current_track)
+        self.theater_view.set_cover_pixmap(self.now_view.cover_pixmap())
+        self.theater_view.showFullScreen()
+
+    # --- accent picker (v0.8.0) ---
+
+    def _open_accent_picker(self) -> None:
+        """Live-tweak the current palette's accents; save as a pack."""
+        base = self._palette
+        dlg = AccentPickerDialog(base, self)
+        dlg.palette_changed.connect(self.apply_palette)
+        dlg.pack_saved.connect(
+            lambda key: self.set_status(f"Palette pack saved: {key}")
+        )
+
+        def _restore_unsaved() -> None:
+            if not dlg.saved:
+                self.apply_palette(base)
+
+        dlg.finished.connect(_restore_unsaved)
+        dlg.exec()
 
     def summon(self) -> None:
         self.show()
