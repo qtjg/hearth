@@ -163,7 +163,7 @@ GLOW_MIX_ARTISTS = 3            # top rotation artists whose kindred tracks feed
 GLOW_MIX_ROTATION_SHARE = 0.6   # ~60% of the blend comes from your rotation
 HISTORY_CHIP_DAYS = 14          # day-jump chips shown on the history page
 
-VERSION = "0.6.3"
+VERSION = "0.7.0"
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

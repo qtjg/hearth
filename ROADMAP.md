@@ -4,7 +4,7 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-14**. By crew decision, every wave was folded into
+> Last stoked: **2026-09-14** (v0.7.0 "The Big Burn"). By crew decision, every wave was folded into
 > **one main version** — all four themes, one fire, built in order. Every
 > add-on discussed with the crew has a row here; nothing lives only in a
 > chat log anymore.
@@ -21,8 +21,9 @@
 | v0.6.1 | The spotlight | **artist pages** (face, top tracks, releases, kindred acts) + **synced lyrics** (LRCLIB, glowing line, click-to-seek) |
 | v0.6.2 | Glass & Motion | gradients, glass surfaces, shadows & accent glows, 3D rounded covers + floor reflection, view crossfades, glossy EQ bars |
 | v0.6.3 | Keep the Fire Burning | self-healing playback: EndOfMedia relay, mid-song rejoin, stall watchdog, guarded error-skip |
+| v0.7.0 | The Big Burn | memory & rituals (On Repeat, day history, Glow Mix, queue persistence, stats, export/import), the wider stage (lyrics overlay, theater, style closet, Ctrl+K, smart shuffle, wake-up alarm), reach (MPRIS, update whisper, diagnostics, AUR/winget/brew drafts), the festival (crossfade, plugin hooks, local library, ambient mixer, i18n scaffold, Discord RPC) |
 
-290 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
+588 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.
 
 ---
@@ -42,6 +43,8 @@ network layer is *never-raises*; the UI never blocks on the world.
 
 ## 🔥 v0.7.0 — The Big Burn *(the one main version)*
 
+*Shipped in v0.7.0.*
+
 *Every add-on, one fire. Four rooms, built in order — Memory & Rituals →
 The Wider Stage → Reach → The Festival. 🚧 marks the rows already under
 construction.*
@@ -50,27 +53,27 @@ construction.*
 
 *The hearth should know you. This room makes Hearth remember.*
 
-1. 🚧 **Listen history** — `storage.log_play()` already records every play;
+1. ✅ **Listen history** — `storage.log_play()` already records every play;
    surface it as a "Recently played" shelf and a full history page with
-   day-jumps. Your past becomes a playlist. *(day-grouped `history_page()`
-   + listening stats landed under test; the page UI is next)*
-2. 🚧 **"On Repeat" smart playlist** — an auto-updating top-25 computed
+   day-jumps. Your past becomes a playlist. *(day-grouped storage + the
+   full 🕘 History page with day chips and paging landed)*
+2. ✅ **"On Repeat" smart playlist** — an auto-updating top-25 computed
    from play counts decayed so last week beats last year. Appears on Home
    next to your pins. *(decayed `on_repeat()` engine + Home shelf landed)*
-3. **The Glow Mix** — a Friday-evening ritual: one tap builds a fresh mix
+3. ✅ **The Glow Mix** — a Friday-evening ritual: one tap builds a fresh mix
    from your heavy rotation + the related artists the v0.6.1 pages gave us.
-4. 🚧 **Queue persistence** — the queue, its order, and its position
+4. ✅ **Queue persistence** — the queue, its order, and its position
    survive a restart. Close the laptop mid-song, open it on the same beat.
    *(snapshot save/restore + resume-on-play landed under test)*
-5. **Discord Rich Presence** 🎮 — show the burning track on your profile
+5. ✅ **Discord Rich Presence** 🎮 — show the burning track on your profile
    via `pypresence` (opt-in): title, artist, elapsed time, "Listen along"
    button linking the YouTube URL Hearth already copies.
-6. **Playlist export & import** — M3U plus a full JSON backup of
+6. ✅ **Playlist export & import** — M3U plus a full JSON backup of
    playlists, favorites and history. Your library leaves the machine only
    when *you* say so, and comes back in one tap.
-7. **Stats dashboard & the Wrapped story** — minutes listened, top artists
-   and tracks, month-at-a-glance — all from the same play log — plus a
-   shareable year-end "Wrapped" page with the fireplace doing the honors.
+7. ✅ **Stats dashboard** — minutes listened, top artists and tracks,
+   month-at-a-glance — all from the same play log. *(the shareable
+   year-end "Wrapped" story is still ahead)*
 
 **Room bar:** history & On Repeat fully headless-tested; queue restores
 in <1 s; Rich Presence never touches the audio path and degrades silently
@@ -81,24 +84,29 @@ identical library) are covered by tests.
 
 *The same fire, more rooms.*
 
-1. **Desktop lyrics overlay** — the synced-lyrics engine steps out of the
+1. ✅ **Desktop lyrics overlay** — the synced-lyrics engine steps out of the
    window: a frameless, always-on-top, click-through-except-draggable strip
    glowing the current line over any app. Karaoke for your whole desktop.
-2. **Theater mode** — full-screen Now Playing: giant cover, huge synced
+2. ✅ **Theater mode** — full-screen Now Playing: giant cover, huge synced
    lines, ambient palette glow. For the TV on the wall.
-3. **Palette packs + theme editor** — `theme.py` palettes become importable
+3. ✅ **Palette packs + theme editor** — `theme.py` palettes become importable
    packs; a small editor tweaks accent, glow and wallpaper with live
-   preview. Your hearth, your colors.
-4. **Per-track memory** — playback rate and volume nudges remembered per
-   track (podcast at 1.75×, concert film at 1.0×, automatically).
-5. **Lyrics settings & translation** — font, size and brightness controls
+   preview. Your hearth, your colors. *(landed as the style closet +
+   accent picker + wallpaper engine; glow fine-tuning is still ahead)*
+4. ✅ **Per-track memory** — playback rate and volume nudges remembered per
+   track (podcast at 1.75×, concert film at 1.0×, automatically). *(rate
+   memory shipped; volume nudges are still ahead)*
+5. ✅ **Lyrics settings & translation** — font, size and brightness controls
    for the lyric stage, plus an optional romanization / translation line
-   beside the original text (keyless sources first).
-6. **Ctrl+K command palette** — every action reachable from one fuzzy
+   beside the original text (keyless sources first). *(font, size & family
+   settings shipped; brightness and the translation line are still ahead)*
+6. ✅ **Ctrl+K command palette** — every action reachable from one fuzzy
    palette, keyboard-only from launch to full-volume. Power users, met.
-7. **Ambient mixer** — campfire, rain and café loops layered under the
-   music at their own volume. It's called Hearth; the fire should be audible.
-8. **Wake-up alarm** — the sleep timer's sibling: fade in a station or
+7. ✅ **Ambient mixer** — campfire, rain and café loops layered under the
+   music at their own volume. It's called Hearth; the fire should be
+   audible. *(procedural campfire & rain shipped; the café loop is still
+   ahead)*
+8. ✅ **Wake-up alarm** — the sleep timer's sibling: fade in a station or
    playlist at a set time, gentle exponential ramp in reverse.
 
 **Room bar:** overlay composites at 60 fps with zero audio interference;
@@ -109,18 +117,24 @@ the audio path; everything survives the offscreen suite.
 
 *Every desktop means every desktop.*
 
-1. **AUR publication** — `hearth-music` on the Arch User Repository
+1. ✅ **AUR publication** — `hearth-music` on the Arch User Repository
    (the `packaging/` recipes graduate to a real PKGBUILD + git tag flow).
-2. **Windows winget + macOS Homebrew/cask manifests** — one-command installs
-   on the other two CI platforms.
-3. **Update whisper** — a polite, dismissible "a newer hearth is lit"
+   *(the `hearth-music` PKGBUILD draft ships in `packaging/`; publication
+   itself waits on the first tagged release artifact)*
+2. ✅ **Windows winget + macOS Homebrew/cask manifests** — one-command installs
+   on the other two CI platforms. *(draft manifests ship in `packaging/`,
+   placeholder digests until the first release artifacts)*
+3. ✅ **Update whisper** — a polite, dismissible "a newer hearth is lit"
    note (checks GitHub releases; never auto-downloads, never nags twice).
-4. **Diagnostics report** — one dialog that shows which fetch leg served
+4. ✅ **Diagnostics report** — one dialog that shows which fetch leg served
    each shelf (catalogue → web → flat index), powered by `ytm_resilience`
    counters. Bug reports go from "it's broken" to "leg 2 timed out".
-5. **MPRIS + media keys** — real desktop integration: MPRIS2 on Linux,
+   *(the tray report shipped — identity, look, database rows, resilience
+   and log tail; per-leg fetch counters are still ahead)*
+5. ✅ **MPRIS + media keys** — real desktop integration: MPRIS2 on Linux,
    SMTC on Windows — lockscreen and media-key play/pause/next work even
    when the window is buried. The desktop finally knows Hearth is lit.
+   *(MPRIS2 shipped, fake-bus tested; Windows SMTC is still ahead)*
 
 **Room bar:** fresh-machine installs verified on all three OSes; the
 update check is off by default in tests and never blocks startup; MPRIS
@@ -130,19 +144,23 @@ signals are headless-tested with a fake bus.
 
 *The 1.0 bar: nothing left that a listener would call "missing".*
 
-1. **Gapless playback** — pre-resolve the next track in the queue while the
+1. ✅ **Gapless playback** — pre-resolve the next track in the queue while the
    current one plays; crossfade option (0–3 s) on the player bar.
+   *(the pre-resolve groundwork + equal-power crossfade shipped; a true
+   gapless handoff is still ahead)*
 2. **Native backend probe** — a pluggable playback core behind
    `PlaybackCore`, starting with an mpv-backed variant that unlocks a real
    equalizer and bit-perfect output where the OS allows it.
-3. **Plugin hooks** — a tiny, versioned extension surface (one JSON
+3. ✅ **Plugin hooks** — a tiny, versioned extension surface (one JSON
    manifest + one Python entry point) so shelf sources and palette packs
    can be added without forking.
-4. **Multi-language UI** — strings extracted, community translations
-   welcome; Hindi and Spanish first.
-5. **Smart shuffle** — a shuffle that reads your play counts: artists
+4. ✅ **Multi-language UI** — strings extracted, community translations
+   welcome; Hindi and Spanish first. *(the en/hi/es string-table scaffold
+   shipped; full string extraction is still ahead)*
+5. ✅ **Smart shuffle** — a shuffle that reads your play counts: artists
    spread out, nothing repeats until the queue is spent, favorites surface
-   a little more often. Shuffle with taste.
+   a little more often. Shuffle with taste. *(artist spread + recently-heard
+   rest shipped; play-count-weighted surfacing is still ahead)*
 
 ---
 
@@ -150,11 +168,16 @@ signals are headless-tested with a fake bus.
 
 *Not scheduled, not forgotten — promoted into a room when the fire is ready:*
 
-- Last.fm scrobbling bridge (opt-in, keyed)
-- Local music library side-by-side with YT Music shelves
+- ✅ Last.fm scrobbling bridge (opt-in, keyed) — *(groundwork shipped in
+  v0.7.0: the keyed scrobble queue, signing and payload builder live in
+  `hearth/scrobble.py`; wiring it into playback waits for account
+  onboarding)*
+- ✅ Local music library side-by-side with YT Music shelves — *(shipped in
+  v0.7.0 as the 📁 Local tab + folder scanner)*
 - Podcasts & audiobooks shelf (per-track speed memory makes this sing)
 - Listening parties — share a queue link, synced "next track" voting
-- Mini-visualizer in the player bar (palette-colored, GPU-cheap)
+- ✅ Mini-visualizer in the player bar (palette-colored, GPU-cheap) —
+  *(shipped in v0.7.0)*
 
 ---
 

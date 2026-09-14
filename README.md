@@ -7,8 +7,8 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=72&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Gradients+%C2%B7+glows+%C2%B7+3D+covers+%C2%B7+crossfades;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-323%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.6.3-ff7a18?style=flat-square)
+![tests](https://img.shields.io/badge/tests-588%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.7.0-ff7a18?style=flat-square)
 ![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
@@ -348,7 +348,8 @@ Five ships, five waves — each one a full layer of the app:
 | v0.6 | 🌍 Discover + 🗺️ World Explorer | the whole YT Music catalogue + a 74-station world dial |
 | v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
 | v0.6.2 | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades |
-| **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, streams that die mid-song get rejoined, dead URLs are skipped once and never re-fed, no spam storms, no zombie pauses — **current release** |
+| **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, streams that die mid-song get rejoined, dead URLs are skipped once and never re-fed, no spam storms, no zombie pauses |
+| **v0.7.0** | 🔥 The Big Burn | memory & rituals — On Repeat, history, Glow Mix, queue persistence + the wider stage — overlay, theater, style closet + services — MPRIS, Discord RPC, stats + plugins, local library, ambient mixer — **current release** |
 
 ### 🆕 New stuff — the add-on map
 
@@ -357,6 +358,16 @@ lives, and the fastest way to feel it:
 
 | Add-on | Wave | Where it lives | Try this first |
 |:---|:---|:---|:---|
+| 🧠 **On Repeat & full history** | v0.7.0 | the Home shelf + the 🕘 History tab | play a few favorites — the On Repeat shelf re-ranks itself (last week beats last year), then tap a day chip to jump back two weeks |
+| ✨ **Glow Mix** | v0.7.0 | the ✨ chip on the On Repeat shelf | hit it — your heavy rotation blended with kindred radio tracks, shuffled straight into the queue |
+| 🪧 **Lyrics overlay & 🎭 theater** | v0.7.0 | tray → *🪧 Desktop lyrics* · the 🎭 nav action | send the glowing lyric line over every window (drag it anywhere), then go full-screen theater — `Esc` brings you home |
+| ⌨️ **Ctrl+K command palette** | v0.7.0 | anywhere | press `Ctrl+K` and type — themes, speeds, "go to history" — every action ranked as you type |
+| 🪞 **Style closet & wallpapers** | v0.7.0 | the 🪞 button in the sidebar PLAYLISTS header | wear **Frosted Glass**, upload your own background, slide the see-through dial from 30–100% |
+| 📊 **Stats dashboard** | v0.7.0 | the 📊 Stats tab | plays, unique tracks, estimated minutes, days listened, top tracks & artists, month bars |
+| 🎮 **MPRIS & Discord Rich Presence** | v0.7.0 | your desktop's media keys + your Discord profile | hit your keyboard's play key — hearth obeys; then flip the 🎮 tray toggle so friends can Listen Along |
+| 🔀 **Smart shuffle** | v0.7.0 | the 🔀 shuffle button | artists spread out and recently-heard tracks rest — same button, grown-up shuffle |
+| 🌫️ **Ambient mixer** | v0.7.0 | tray → *🌫️ Ambient* | layer procedural campfire or rain (synthesized live — zero audio files) under the music |
+| 🔌 **Plugins & 📁 Local library** | v0.7.0 | the 📁 Local tab + `<appdata>/plugins` | 📂 Add folder… scans your own mp3/flac into hearth; drop a plugin in for palettes & home shelves |
 | 🔥 **Self-healing playback** | v0.6.3 | the audio core | start a radio and walk away — finished tracks roll on by themselves, a stream that dies mid-song gets rejoined, and a URL that never opens is skipped once, never re-fed |
 | 🪞 **Glass & Motion** | v0.6.2 | the entire window | swap to **Frost** or **Orchid** in the tray — every gradient, glow and 3D cover repaints itself |
 | 🪩 **3D covers & reflections** | v0.6.2 | Now Playing & every card grid | press `N` — the cover floats on an accent halo over a fading floor mirror |
@@ -400,6 +411,24 @@ That's the last four releases in one lap of the room.
 | 🎤 **[Artist pages](#-spotlight--artist-pages--words-that-keep-the-beat-v061)** · v0.6.1 🆕 | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
 | ✨ **[Synced lyrics](#-spotlight--artist-pages--words-that-keep-the-beat-v061)** · v0.6.1 🆕 | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
 | 🪞 **[Glass & Motion](#-glass--motion--the-2020s-pass-v062)** · v0.6.2 🆕 | Gradient glass surfaces, accent glows, 3D beveled covers with floor reflections, view crossfades — the whole layer recolors per theme |
+| 🧠 **On Repeat & day history** · v0.7.0 🆕 | The Home shelf re-ranks your most-played with a decay curve; the 🕘 History tab jumps to any of the last 14 listening days |
+| ✨ **Glow Mix** · v0.7.0 🆕 | One tap blends your heavy rotation with kindred radio tracks into a fresh shuffled queue |
+| 🪧 **Desktop lyrics overlay** · v0.7.0 🆕 | The glowing current line floats above every window — draggable, palette-aware, opt-in |
+| 🎭 **Theater mode** · v0.7.0 🆕 | Full-screen Now Playing: giant glowing cover, huge lyric line, `Esc` back to the room |
+| 🪞 **Style closet & wallpapers** · v0.7.0 🆕 | Four style packs, your own background image, a see-through dial from 30–100% — all persisted |
+| ⌨️ **Ctrl+K command palette** · v0.7.0 🆕 | Fuzzy-search every action — play, themes, speeds, go-to-view — from anywhere |
+| 📊 **Stats dashboard** · v0.7.0 🆕 | Plays, unique tracks, estimated minutes, days listened, top tracks & artists, month bars |
+| 🎮 **MPRIS & media keys** · v0.7.0 🆕 | Your desktop's play/pause keys drive hearth with real metadata — even when the window is buried |
+| 💬 **Discord Rich Presence** · v0.7.0 🆕 | Opt-in presence with a Listen Along button — `pip install hearth-music[discord]` |
+| 🔀 **Smart shuffle** · v0.7.0 🆕 | Artists spread out, recently-heard tracks rest — shuffle with taste |
+| ⏰ **Wake-up alarm** · v0.7.0 🆕 | The sleep timer's sibling: set it from the tray and music fades in over 15–60 minutes |
+| 🎚️ **Equal-power crossfade** · v0.7.0 🆕 | Opt-in 0–3s fade at the song's natural end, with the next stream pre-resolved in the background |
+| 📼 **Mini-visualizer** · v0.7.0 🆕 | Accent-tinted bars dance in the player bar while the music plays |
+| ⏱️ **Per-track speed memory** · v0.7.0 🆕 | That podcast stays at 1.5x — the playback rate is remembered per track |
+| 🔌 **Plugins & local library** · v0.7.0 🆕 | Drop a folder into `<appdata>/plugins` for palettes & shelves; 📂 Add folder… scans your mp3/flac into 📁 Local |
+| 🌫️ **Ambient mixer** · v0.7.0 🆕 | Procedural campfire & rain, synthesized live under the music — zero audio files |
+| 📤 **Playlist export & import** · v0.7.0 🆕 | Playlists round-trip as JSON and M3U — export all, import back, no lock-in |
+| 🕯️ **Update whisper & 🩺 diagnostics** · v0.7.0 🆕 | Opt-in, dismissible release checks; a tray report of identity, database & log health |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
 | 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, autoplay, favorites, playlists, and history persist |
@@ -470,6 +499,7 @@ Both use an isolated `.venv` — your system Python stays untouched.
 | `Ctrl` + `Alt` + `←` | Previous track |
 | `Ctrl` + `Alt` + `E` | Toggle the window / ribbon |
 | `Ctrl` + `Alt` + `F` | Focus search |
+| `Ctrl` + `K` | Command palette — every action, fuzzy-searched |
 
 **In-window keys** (v0.5) work wherever you are — `Space` play/pause,
 `←`/`→` seek ±10s, `↑`/`↓` volume, `/` focus search, `M` mute, `S` shuffle,
@@ -508,18 +538,19 @@ hearth/
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
 ├── docs/assets/        → animated 3D SVG artwork, banner art & screenshots used by this README
-├── tests/              → 323 headless tests (offscreen Qt platform)
+├── tests/              → 588 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
-└── pyproject.toml      → `pip install .` gives you the `hearth` command
+└── pyproject.toml      → `pip install .` gives you the `hearth` command;
+                         `pip install hearth-music[discord]` adds Discord Rich Presence
 ```
 
 ---
 
 ## 🧪 Testing
 
-323 tests cover models, palettes, playlists, share codecs, storage, retry
+588 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
 caching, LRC parsing, the LRCLIB fallback ladder, artist-page mapping
 (catalogue, jobs, view, app drill-down), hotkey conflicts, the genre
@@ -527,7 +558,14 @@ universe (every dial described, seed rotation), search-everywhere fallback
 ladders, the main window (views, player bar, queue dock with drag & drop,
 pin flow), the player's full immune system (rejoin budgets, dead-URL skips,
 watchdog stalls, buffering grace, the proof-of-audio gate), the Qt message
-bridge, and the real app booting headless:
+bridge, the real app booting headless — and the whole Big Burn: memory &
+rituals (decay-ranked On Repeat, day-grouped history, stats, queue
+snapshots, JSON/M3U round-trips), the wider stage (overlay, theater,
+palette packs, style closet & wallpapers), controls (Ctrl+K palette, smart
+shuffle, the alarm fade, per-track speed memory, the mini-visualizer),
+services (MPRIS on a fake bus, update whisper, diagnostics), equal-power
+crossfade with a primed shadow player, plugins & the local scanner, the
+ambient DSP, i18n + scrobble scaffolds, and Discord Rich Presence:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -556,8 +594,11 @@ main version — **v0.7.0 "The Big Burn"** — four rooms, built in order:
 - 🎪 **The Festival**: gapless playback, native backend probe, plugin
   hooks, multi-language UI, smart shuffle
 
-The fire is lit: the On Repeat engine + home shelf, day-grouped history,
-listening stats and queue persistence have already landed — 323 tests green.
+The Big Burn burned bright: every room landed — On Repeat, history, Glow
+Mix and queue persistence on the memory side, the overlay & theater stage,
+the style closet, Ctrl+K, smart shuffle, stats, MPRIS, Discord RPC,
+crossfade, plugins, the local library and the ambient mixer — 588 tests
+green.
 
 ---
 
