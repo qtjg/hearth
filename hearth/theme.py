@@ -11,13 +11,16 @@ color fields}) that anyone can drop into their hearth.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
-from dataclasses import replace
+import re
+from dataclasses import dataclass, replace
 from pathlib import Path
 from string import Template
 
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont, QImage
 
 from . import config
 from .config import Palette
@@ -68,7 +71,7 @@ QPushButton:pressed { background: $surface; }
 QPushButton[accent="true"] {
     background: qlineargradient(x1:0 y1:0 x2:0 y2:1,
         stop:0 $accent_soft, stop:1 $accent);
-    color: $bg; border: none; border-radius: 11px; font-weight: 700;
+    color: $bg_solid; border: none; border-radius: 11px; font-weight: 700;
 }
 QPushButton[accent="true"]:hover {
     background: qlineargradient(x1:0 y1:0 x2:0 y2:1,
@@ -112,7 +115,7 @@ QPushButton[chip="true"]:hover { color: $text; border: 1px solid $accent; }
 QPushButton[chip="true"]:checked {
     background: qlineargradient(x1:0 y1:0 x2:0 y2:1,
         stop:0 $accent_soft, stop:1 $accent);
-    color: $bg; border: 1px solid $accent;
+    color: $bg_solid; border: 1px solid $accent;
 }
 
 QLabel[tile="true"] {
@@ -233,9 +236,130 @@ def _rgba(color: str, alpha_pct: int) -> str:
     return f"rgba({r}, {g}, {b}, {alpha_pct}%)"
 
 
-def build_stylesheet(p: Palette) -> str:
-    """Compile the runtime stylesheet from a Palette (strict: missing token = error)."""
-    derived = {
+# ----------------------------------------------------------------- style packs
+#
+# A palette says *which* colors; a style pack says *how* they're poured —
+# opaque gradients, frosted glass panes, a lighter veil, or neon rims.
+# Styles are pure token/append transforms, so every palette inherits all
+# of them for free.
+
+_RADIUS_RE = re.compile(r"border-radius: (\d+)px")
+
+
+@dataclass(frozen=True)
+class StylePack:
+    """A visual language layered over any palette.
+
+    glass        surfaces (and the canvas under a wallpaper) turn translucent
+    panel_alpha  surface opacity in glass mode, percent
+    radius_delta added to every border-radius (softness dial)
+    lift         how much surfaces mix toward the text color (lighter glass)
+    rim          accent-tinted edges instead of neutral hairlines
+    """
+
+    key: str
+    label: str
+    blurb: str
+    glass: bool = False
+    panel_alpha: int = 100
+    radius_delta: int = 0
+    lift: float = 0.0
+    rim: bool = False
+
+
+STYLES: dict[str, StylePack] = {
+    "hearth": StylePack(
+        key="hearth", label="Hearth",
+        blurb="the classic warm gradients",
+    ),
+    "glass": StylePack(
+        key="glass", label="Frosted Glass",
+        blurb="translucent panes, soft rims",
+        glass=True, panel_alpha=72, radius_delta=4,
+    ),
+    "veil": StylePack(
+        key="veil", label="Morning Veil",
+        blurb="light glass, airy and bright",
+        glass=True, panel_alpha=56, radius_delta=6, lift=0.16,
+    ),
+    "neon": StylePack(
+        key="neon", label="Neon Rim",
+        blurb="dark glass with glowing edges",
+        glass=True, panel_alpha=64, radius_delta=4, rim=True,
+    ),
+}
+
+DEFAULT_STYLE = "hearth"
+
+# active look — module state so every surface (window, panel, toast,
+# overlay) picks it up through build_stylesheet without new plumbing
+_style_key: str = DEFAULT_STYLE
+_wallpaper_alpha: int | None = None
+
+
+def set_style(key: str | None) -> None:
+    """Choose the active style pack (unknown keys fall back to the default)."""
+    global _style_key
+    _style_key = key if key in STYLES else DEFAULT_STYLE
+
+
+def active_style() -> str:
+    return _style_key
+
+
+def set_wallpaper_alpha(alpha: int | None) -> None:
+    """How much the UI skin lets a wallpaper glow through (None = no wallpaper)."""
+    global _wallpaper_alpha
+    _wallpaper_alpha = alpha
+
+
+def active_wallpaper_alpha() -> int | None:
+    return _wallpaper_alpha
+
+
+def get_style(key: str | None = None) -> StylePack:
+    """Look up a style pack by key (None = active), falling back to default."""
+    k = key if key in STYLES else (_style_key if _style_key in STYLES else DEFAULT_STYLE)
+    return STYLES[k]
+
+
+def _bump_radii(css: str, delta: int) -> str:
+    if delta <= 0:
+        return css
+    return _RADIUS_RE.sub(lambda m: f"border-radius: {int(m.group(1)) + delta}px", css)
+
+
+def _rim_css(p: Palette) -> str:
+    """Neon Rim: appended rules re-edge the chrome with accent light."""
+    edge = _rgba(p.accent, 42)
+    hot = _rgba(p.accent_soft, 78)
+    return f"""
+QFrame[card="true"], QPushButton[card="true"] {{ border: 1px solid {edge}; }}
+QPushButton[chip="true"]:checked {{ border: 1px solid {hot}; }}
+QPushButton[nav="true"]:checked {{ border-left: 3px solid {p.accent_soft}; }}
+QWidget[playerbar="true"] {{ border-top: 1px solid {edge}; }}
+QWidget[ribbon="true"] {{ border-bottom: 1px solid {edge}; }}
+QLineEdit {{ border: 1px solid {edge}; }}
+QLineEdit:focus {{ border: 1px solid {hot}; }}
+QToolTip {{ border: 1px solid {hot}; }}
+QMenu {{ border: 1px solid {edge}; }}
+"""
+
+
+def build_stylesheet(p: Palette, style_key: str | None = None,
+                     wallpaper_alpha: int | None = None) -> str:
+    """Compile the runtime stylesheet from a Palette + style pack.
+
+    Both axes are optional: style_key None → the active style; wallpaper
+    alpha None → the active wallpaper policy (no translucency when unset).
+    Strict on tokens: a missing palette field is an error.
+    """
+    style = get_style(style_key)
+    wa = wallpaper_alpha if wallpaper_alpha is not None else _wallpaper_alpha
+    if wa is not None:
+        wa = max(config.WALLPAPER_ALPHA_MIN, min(config.WALLPAPER_ALPHA_MAX, wa))
+
+    derived: dict[str, str] = {
         # depth: lift the top of the canvas and surfaces toward the text color
         "bg_hi": _mix(p.bg, p.text, 0.035),
         "surface_hi": _mix(p.surface, p.text, 0.045),
@@ -249,14 +373,93 @@ def build_stylesheet(p: Palette) -> str:
         # a lighter inner edge that reads as light catching the glass
         "edge_hi": _mix(p.hairline, p.text, 0.14),
         "font_stack": _FONT_STACK,
+        # opaque canvas color for text poured onto accents (never translucent)
+        "bg_solid": p.bg,
     }
-    return _STYLESHEET.substitute(
-        bg=p.bg, surface=p.surface, surface_alt=p.surface_alt,
+
+    glass = style.glass or wa is not None
+    if glass:
+        # the canvas goes translucent only when a wallpaper shines through;
+        # panes go translucent whenever the style asks for glass
+        root_a = 100
+        surf_a = style.panel_alpha if style.glass else 100
+        if wa is not None:
+            root_a = min(root_a, wa)
+            surf_a = min(surf_a, min(96, wa + 10))
+        lift = style.lift
+
+        def _pane(color: str) -> str:
+            c = _mix(color, p.text, lift) if lift else color
+            return _rgba(c, surf_a)
+
+        derived["bg"] = _rgba(p.bg, root_a)
+        derived["bg_hi"] = _rgba(_mix(p.bg, p.text, 0.035), root_a)
+        derived["surface"] = _pane(p.surface)
+        derived["surface_alt"] = _pane(p.surface_alt)
+        derived["surface_hi"] = _pane(_mix(p.surface, p.text, 0.045))
+        derived["surface_focus"] = _pane(_mix(p.surface_alt, p.text, 0.06))
+
+    css = _STYLESHEET.substitute(
+        bg=derived.pop("bg", p.bg), surface=derived.pop("surface", p.surface),
+        surface_alt=derived.pop("surface_alt", p.surface_alt),
         hairline=p.hairline, text=p.text, text_dim=p.text_dim,
         accent=p.accent, accent_soft=p.accent_soft, danger=p.danger,
         success=p.success, selection=p.selection, scroll=p.scroll,
         **derived,
     )
+    if style.rim:
+        css += _rim_css(p)
+    return _bump_radii(css, style.radius_delta)
+
+
+# ----------------------------------------------------------------- wallpaper
+
+def import_wallpaper(src, dest_dir, max_dim: int | None = None) -> str | None:
+    """Copy an image into the app's wallpaper store, normalized + downscaled.
+
+    Returns the stored path, or None when the file is missing, not an
+    image we can read, or unwritable. The stored name is a content hash,
+    so re-importing the same picture never duplicates files.
+    """
+    src_path = Path(src)
+    if not src_path.is_file():
+        return None
+    if src_path.suffix.lower() not in config.IMAGE_SUFFIXES:
+        return None
+    try:
+        raw = src_path.read_bytes()
+    except OSError:
+        return None
+    img = QImage(str(src_path))
+    if img.isNull():
+        return None
+    limit = max_dim if max_dim is not None else config.WALLPAPER_MAX_DIM
+    if max(img.width(), img.height()) > limit:
+        img = img.scaled(
+            limit, limit,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        if img.isNull():
+            return None
+    try:
+        dest_dir = Path(dest_dir)
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        ext = ".png" if img.hasAlphaChannel() else ".jpg"
+        dest = dest_dir / (hashlib.sha1(raw).hexdigest()[:12] + ext)
+        if not dest.exists() and not img.save(str(dest)):
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return str(dest)
+
+
+def remove_wallpaper(path) -> None:
+    """Best-effort delete of a stored wallpaper (never raises)."""
+    try:
+        Path(path).unlink(missing_ok=True)
+    except OSError:
+        log.info("wallpaper removal failed for %s", path, exc_info=True)
 
 
 # ----------------------------------------------------------------- palette packs

@@ -13,7 +13,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QKeySequence, QShortcut
+from PyQt6.QtGui import QColor, QFont, QImage, QKeySequence, QPixmap, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -54,6 +54,7 @@ from .lyrics import LrcLine, SyncedLyrics
 from .models import Album, Artist, Track
 from .storage import HearthStore
 from .theme import (
+    STYLES,
     build_stylesheet,
     export_palette,
     lyrics_font,
@@ -1821,6 +1822,103 @@ class AccentPickerDialog(QDialog):
 
 
 
+class StylePickerDialog(QDialog):
+    """The style closet: try whole visual languages + your own wallpaper.
+
+    Everything is a live trial — clicking a style card (or dragging the
+    wallpaper slider) re-skins the running app through signals; only OK
+    commits. Cancel lets the app restore whatever the room looked like
+    before the closet opened.
+    """
+
+    style_trial = pyqtSignal(str)            # key — preview a style live
+    style_chosen = pyqtSignal(str)           # key — committed on OK
+    background_picked = pyqtSignal(str)      # image file the user picked
+    background_cleared = pyqtSignal()
+    wallpaper_alpha_changed = pyqtSignal(int)
+
+    def __init__(self, style_key: str, alpha: int, has_wallpaper: bool,
+                 parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🪞 Style closet")
+        self.setMinimumWidth(380)
+        self.saved = False
+        self._current = style_key
+
+        lay = QVBoxLayout(self)
+        lay.setSpacing(8)
+
+        head = QLabel("STYLE")
+        head.setProperty("kicker", True)
+        lay.addWidget(head)
+
+        self._cards: dict[str, QPushButton] = {}
+        for key, pack in STYLES.items():
+            card = QPushButton(f"{pack.label}  —  {pack.blurb}")
+            card.setCheckable(True)
+            card.setCursor(Qt.CursorShape.PointingHandCursor)
+            card.setChecked(key == style_key)
+            card.clicked.connect(lambda _=False, k=key: self._trial(k))
+            self._cards[key] = card
+            lay.addWidget(card)
+
+        lay.addSpacing(6)
+        bg_head = QLabel("BACKGROUND")
+        bg_head.setProperty("kicker", True)
+        lay.addWidget(bg_head)
+
+        self._upload_btn = QPushButton("🖼 Upload background…")
+        self._upload_btn.clicked.connect(self._pick_image)
+        lay.addWidget(self._upload_btn)
+
+        self._remove_btn = QPushButton("🚫 Remove background")
+        self._remove_btn.clicked.connect(self.background_cleared.emit)
+        self._remove_btn.setEnabled(has_wallpaper)
+        lay.addWidget(self._remove_btn)
+
+        alpha_row = QHBoxLayout()
+        alpha_cap = QLabel("See-through")
+        alpha_cap.setProperty("dim", True)
+        self._alpha = QSlider(Qt.Orientation.Horizontal)
+        self._alpha.setRange(config.WALLPAPER_ALPHA_MIN, config.WALLPAPER_ALPHA_MAX)
+        self._alpha.setValue(alpha)
+        self._alpha.valueChanged.connect(self.wallpaper_alpha_changed.emit)
+        alpha_row.addWidget(alpha_cap)
+        alpha_row.addWidget(self._alpha, 1)
+        lay.addLayout(alpha_row)
+
+        row = QHBoxLayout()
+        ok = QPushButton("Wear it")
+        ok.setProperty("accent", True)
+        ok.clicked.connect(self._commit)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        row.addWidget(ok, 1)
+        row.addWidget(cancel)
+        lay.addLayout(row)
+
+    # --- internals ---
+
+    def _trial(self, key: str) -> None:
+        self._current = key
+        for k, card in self._cards.items():
+            card.setChecked(k == key)
+        self.style_trial.emit(key)
+
+    def _commit(self) -> None:
+        self.saved = True
+        self.style_chosen.emit(self._current)
+        self.accept()
+
+    def _pick_image(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Choose a background image", "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp *.gif);;All files (*)",
+        )
+        if path:
+            self.background_picked.emit(path)
+
+
 class MainWindow(QMainWindow):
     """Hearth, grown up: navigation, shelves, lists, and a real transport."""
 
@@ -1850,6 +1948,7 @@ class MainWindow(QMainWindow):
     discover_explore_requested = pyqtSignal(str)     # new_releases|trending|new_videos
     discover_enqueue_all_requested = pyqtSignal(list)  # queue a whole curated list
     world_station_requested = pyqtSignal(object)     # world.Genre — tune a station
+    style_closet_requested = pyqtSignal()            # open the style closet
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -1901,6 +2000,15 @@ class MainWindow(QMainWindow):
         outer.addLayout(body, 1)
         outer.addWidget(self.player_bar)
         self.setCentralWidget(central)
+
+        # wallpaper engine: a translucent skin poured over a user image.
+        # the label lives under every sibling but above the QSS canvas.
+        self._wallpaper: QPixmap | None = None
+        self._wallpaper_path: str | None = None
+        self._bg_label = QLabel(self)
+        self._bg_label.setAttribute(
+            Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self._bg_label.hide()
 
         self.setStyleSheet(build_stylesheet(self._palette))
         self._wire_internal()
@@ -1962,6 +2070,12 @@ class MainWindow(QMainWindow):
         imp.clicked.connect(self._import_playlists)
         head.addWidget(cap)
         head.addStretch(1)
+        closet_btn = QPushButton("🪞")
+        closet_btn.setProperty("flat", True)
+        closet_btn.setFixedWidth(30)
+        closet_btn.setToolTip("Style closet — glass looks, wallpapers")
+        closet_btn.clicked.connect(self.style_closet_requested.emit)
+        head.addWidget(closet_btn)
         accent_btn = QPushButton("🎨")
         accent_btn.setProperty("flat", True)
         accent_btn.setFixedWidth(30)
@@ -2556,6 +2670,53 @@ class MainWindow(QMainWindow):
         self.player_bar.apply_palette(palette)
         self.theater_view.apply_palette(palette)
         self.setStyleSheet(build_stylesheet(palette))
+
+    # --- wallpaper engine (v0.8.0 style closet) ---
+
+    @property
+    def wallpaper_path(self) -> str | None:
+        return self._wallpaper_path
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        """Keep the wallpaper covering the stage as the window breathes."""
+        super().resizeEvent(event)
+        if self._wallpaper is not None:
+            self._fit_wallpaper()
+
+    def set_background_image(self, path: str | None) -> bool:
+        """Pour a wallpaper under the UI. False when the image won't load."""
+        if not path:
+            self._wallpaper = None
+            self._wallpaper_path = None
+            self._bg_label.hide()
+            return True
+        img = QImage(path)
+        if img.isNull():
+            return False
+        self._wallpaper_path = str(path)
+        self._wallpaper = QPixmap.fromImage(img)
+        self._fit_wallpaper()
+        self._bg_label.lower()
+        self._bg_label.show()
+        return True
+
+    def _fit_wallpaper(self) -> None:
+        """Cover-crop the original image to the current window rect."""
+        if self._wallpaper is None or self._wallpaper.isNull():
+            return
+        size = self.size()
+        if size.width() < 1 or size.height() < 1:
+            return
+        scaled = self._wallpaper.scaled(
+            size,
+            Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        x = max(0, (scaled.width() - size.width()) // 2)
+        y = max(0, (scaled.height() - size.height()) // 2)
+        self._bg_label.setGeometry(0, 0, size.width(), size.height())
+        self._bg_label.setPixmap(
+            scaled.copy(x, y, size.width(), size.height()))
 
     # --- theater mode (v0.8.0) ---
 

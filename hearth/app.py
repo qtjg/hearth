@@ -12,7 +12,7 @@ from PyQt6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool, QtMsgType
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import config, world
+from . import config, theme, world
 from .catalog import Catalog
 from .hotkeys import effective_chords
 from .jobs import (
@@ -36,7 +36,7 @@ from .storage import HearthStore
 from .theme import lyrics_font
 from .toast import NowPlayingToast
 from .tray import HearthTray, InstanceGuard
-from .window import MainWindow
+from .window import MainWindow, StylePickerDialog
 
 log = logging.getLogger(__name__)
 
@@ -184,6 +184,9 @@ class Hearth:
         self._lyrics_engine: SyncedLyrics | None = None
         self._overlay_index = -2
         self._overlay_on = bool(config.LYRICS_OVERLAY_ENABLED)
+        # the style closet: active look lives in theme module state; this
+        # slot remembers the wallpaper see-through dial for persistence
+        self._wallpaper_alpha = config.WALLPAPER_ALPHA_DEFAULT
         self.window = MainWindow(palette_key, store=self.store)
         self.tray: HearthTray | None = None
 
@@ -240,6 +243,7 @@ class Hearth:
         w.discover_explore_requested.connect(self._discover_explore)
         w.discover_enqueue_all_requested.connect(self._enqueue_all)
         w.world_station_requested.connect(self._start_world_station)
+        w.style_closet_requested.connect(self._open_style_closet)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -936,6 +940,25 @@ class Hearth:
         self.window.set_lyrics_font(lyrics_font(size_key, family),
                                     size_key, family)
         self.overlay.apply_font(lyrics_font(size_key, family))
+        # the style closet: glass look + wallpaper survive restarts
+        self._wallpaper_alpha = self._int_setting(
+            "ui/wallpaper_alpha", config.WALLPAPER_ALPHA_DEFAULT)
+        theme.set_style(str(self.settings.value("ui/style",
+                                                config.STYLE_DEFAULT)))
+        bg_path = str(self.settings.value("ui/background", "") or "")
+        if bg_path and Path(bg_path).is_file():
+            theme.set_wallpaper_alpha(self._wallpaper_alpha)
+            if not self.window.set_background_image(bg_path):
+                self.settings.remove("ui/background")
+                theme.set_wallpaper_alpha(None)
+        self._restyle()
+
+    def _int_setting(self, key: str, default: int) -> int:
+        """QSettings INI values come back as str — coerce, never raise."""
+        try:
+            return int(self.settings.value(key, default))
+        except (TypeError, ValueError):
+            return default
 
     def _restore_session(self) -> None:
         pos = self.settings.value("geometry/pos")
@@ -962,10 +985,91 @@ class Hearth:
         self.settings.setValue("repeat", self.core.engine.repeat)
         self.settings.setValue("autoplay", self.core.autoplay)
         self.settings.setValue("theme", self.panel._palette.key)
+        self.settings.setValue("ui/style", theme.active_style())
+        self.settings.setValue("ui/wallpaper_alpha", self._wallpaper_alpha)
         self.settings.setValue("geometry/pos", self.panel.pos())
         self.settings.setValue("window/size", self.window.size())
         self.settings.setValue("window/pos", self.window.pos())
         self._save_session_snapshot()
+
+    # --- the style closet (v0.8.0): glass looks + custom wallpapers ---
+
+    def _restyle(self) -> None:
+        """Re-pour every surface with the current palette + style policy."""
+        pal = self.panel._palette
+        self.window.apply_palette(pal)
+        self.panel.apply_palette(pal)
+        self.toast.setStyleSheet(theme.build_stylesheet(pal))
+        self.overlay.set_palette(pal)
+
+    def _open_style_closet(self) -> None:
+        """Live-preview style packs and wallpapers; cancel puts it back."""
+        base_style = theme.active_style()
+        base_alpha = self._wallpaper_alpha
+        dlg = StylePickerDialog(
+            base_style, base_alpha,
+            self.window.wallpaper_path is not None, self.window)
+        dlg.style_trial.connect(self._trial_style)
+        dlg.style_chosen.connect(self._commit_style)
+        dlg.background_picked.connect(self._set_background_from_file)
+        dlg.background_cleared.connect(self._clear_background)
+        dlg.wallpaper_alpha_changed.connect(self._set_wallpaper_alpha)
+
+        def _restore_unsaved() -> None:
+            if not dlg.saved:
+                self._apply_style_policy(
+                    base_style,
+                    base_alpha if self.window.wallpaper_path else None)
+
+        dlg.finished.connect(_restore_unsaved)
+        dlg.exec()
+
+    def _apply_style_policy(self, key: str, alpha: int | None) -> None:
+        """Set the module-wide look and re-pour every surface."""
+        theme.set_style(key)
+        theme.set_wallpaper_alpha(alpha)
+        self._restyle()
+
+    def _trial_style(self, key: str) -> None:
+        self._apply_style_policy(key,
+                                 self._wallpaper_alpha
+                                 if self.window.wallpaper_path else None)
+
+    def _commit_style(self, key: str) -> None:
+        self._apply_style_policy(key,
+                                 self._wallpaper_alpha
+                                 if self.window.wallpaper_path else None)
+        self.settings.setValue("ui/style", key)
+        self.window.set_status(
+            f"Style: {theme.STYLES[key].label}")
+
+    def _set_wallpaper_alpha(self, value: int) -> None:
+        self._wallpaper_alpha = int(value)
+        self.settings.setValue("ui/wallpaper_alpha", self._wallpaper_alpha)
+        theme.set_wallpaper_alpha(
+            self._wallpaper_alpha if self.window.wallpaper_path else None)
+        self._restyle()
+
+    def _set_background_from_file(self, path: str) -> None:
+        """Import the picked image into the store and wear it (never raises)."""
+        stored = theme.import_wallpaper(path, self._dir / "backgrounds")
+        if stored is None:
+            self.window.set_status("Couldn't load that image — try a PNG or JPG")
+            return
+        if not self.window.set_background_image(stored):
+            self.window.set_status("Couldn't load that image — try a PNG or JPG")
+            return
+        theme.set_wallpaper_alpha(self._wallpaper_alpha)
+        self.settings.setValue("ui/background", stored)
+        self._restyle()
+        self.window.set_status("Background set ✨")
+
+    def _clear_background(self) -> None:
+        self.window.set_background_image(None)
+        self.settings.remove("ui/background")
+        theme.set_wallpaper_alpha(None)
+        self._restyle()
+        self.window.set_status("Background removed")
 
     # --- session snapshot: the queue survives a restart (v0.7.0) ---
 

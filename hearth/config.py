@@ -118,9 +118,24 @@ LYRICS_SIZE_PRESETS = {"S": 20, "M": 28, "L": 40}   # px per S/M/L key
 LYRICS_DEFAULT_SIZE_KEY = "M"                        # fallback when unset/unknown
 LYRICS_FONT_FAMILIES = ("Segoe UI", "Inter", "Georgia", "Consolas")
 
+# --- v0.8.0: the style closet (glass looks + custom wallpaper engine) ---
+STYLE_DEFAULT = "hearth"          # the classic warm-gradient look
+WALLPAPER_ALPHA_DEFAULT = 80      # how much UI skin lets a wallpaper glow through
+WALLPAPER_ALPHA_MIN = 30
+WALLPAPER_ALPHA_MAX = 100
+WALLPAPER_MAX_DIM = 2560          # imported wallpapers are downscaled to this edge
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
+
 # --- v1.0.0 groundwork ---
 CROSSFADE_ENABLED = False       # opt-in dual-player crossfade
 CROSSFADE_MAX_MS = 3000         # upper bound of the crossfade slider
+
+# --- v0.8.0 controls: smart shuffle, wake-up alarm, mini-visualizer ---
+SMART_SHUFFLE = False            # artist-spread shuffle instead of pure random (opt-in)
+SMART_SHUFFLE_RECENT_IDS = 48    # smart shuffle never replays the last N played ids
+ALARM_FADE_MS = 20_000           # wake-up fade-in window (silence → pre-alarm volume)
+ALARM_FADE_STEPS = 10            # steps inside that window
+VISUALIZER_TICK_MS = 60          # mini-visualizer animation frame
 
 VERSION = "0.6.3"
 
