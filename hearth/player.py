@@ -12,6 +12,30 @@ from .models import Track
 
 log = logging.getLogger(__name__)
 
+_WAITING_STATUSES: frozenset | None = None
+
+
+def _waiting_statuses() -> frozenset:
+    """Qt media statuses that mean 'working on it'.
+
+    Resolved lazily so headless/CI never touches QtMultimedia until a
+    real backend exists. No module, no grace — callers fall back to
+    judging streams by position alone.
+    """
+    global _WAITING_STATUSES
+    if _WAITING_STATUSES is None:
+        try:
+            from PyQt6.QtMultimedia import QMediaPlayer
+
+            _WAITING_STATUSES = frozenset({
+                QMediaPlayer.MediaStatus.LoadingMedia,
+                QMediaPlayer.MediaStatus.BufferingMedia,
+                QMediaPlayer.MediaStatus.StalledMedia,
+            })
+        except Exception:  # noqa: BLE001 - no multimedia module: no grace
+            _WAITING_STATUSES = frozenset()
+    return _WAITING_STATUSES
+
 
 class QueueEngine:
     """Pure queue logic: history, upcoming, shuffle, repeat. Fully testable."""
@@ -131,6 +155,7 @@ class PlaybackCore(QObject):
         self._end_of_media = None        # Qt enum, resolved with the backend
         self._error_streak = 0
         self._recover_armed = True   # one error-skip per track that actually played
+        self._stream_played = False  # THIS stream demonstrably produced audio
 
         # --- restored-session state (queue persistence, v0.7.0) ---
         self._resume_pending: Track | None = None   # waiting for the first play
@@ -254,6 +279,8 @@ class PlaybackCore(QObject):
     def stop(self) -> None:
         if self._player is not None:
             self._player.stop()
+        self._poll.stop()
+        self._playing = False
         self.state_changed.emit(False)
 
     def shuffle(self) -> None:
@@ -415,6 +442,7 @@ class PlaybackCore(QObject):
             self._player.setPosition(rejoin)
         self._poll.start()
         self._playing = True  # the backend signal confirms or corrects
+        self._stream_played = False  # nothing proven until audio flows
         self._last_pos_ms = rejoin
         self._stream_anchor_ms = rejoin
         self._stall_polls = 0
@@ -449,6 +477,7 @@ class PlaybackCore(QObject):
         self._playing = playing
         if playing:
             self._recover_armed = True   # audio actually flowed — re-arm the skip guard
+            self._stream_played = True   # and this stream is genuinely underway
         self.state_changed.emit(playing)
 
     def _on_media_status(self, status) -> None:
@@ -473,14 +502,32 @@ class PlaybackCore(QObject):
 
     def _on_error(self, err, err_str: str) -> None:
         log.warning("player error: %s", err_str)
+        self._playing = False   # the backend just said otherwise; believe it
         self.state_changed.emit(False)
         current = self.engine.current
         if current is None:
             self.status.emit(f"Playback error: {err_str}")
             return
-        # The song was audibly underway: rejoin it with a fresh URL and
-        # pick up where it stopped, instead of losing it to a skip.
-        if self._last_pos_ms > 0 and self._try_rejoin(current, "dropped"):
+        # A mid-song death on a stream that audibly played: rejoin it
+        # where it stopped. A stream that NEVER opened (dead URL, CDN
+        # 403) has no song to rejoin — position alone can't vouch for
+        # it (a restored session sits at its resume position before the
+        # first byte arrives), and re-feeding the same dead URL is
+        # exactly the 'Could not open media' spam storm of v0.6.3.
+        if self._stream_played and self._last_pos_ms > 0 and self._try_rejoin(current, "dropped"):
+            return
+        self._skip_or_stop(current)
+
+    def _skip_or_stop(self, current: Track | None) -> None:
+        """One stream proved dead past all healing: skip it once, or stop.
+
+        The shared end of every failure path — backend error, watchdog
+        stall, refused rejoin — so a sick pipeline always ends in the
+        same bounded, honest way: at most MAX_ERROR_SKIPS single-shot
+        skips (each one re-armed by real audio), then a clean stop.
+        """
+        if current is None:
+            self.stop()
             return
         if not self._recover_armed or self._error_streak >= self.MAX_ERROR_SKIPS:
             self.stop()
@@ -488,7 +535,7 @@ class PlaybackCore(QObject):
             return
         self._recover_armed = False
         self._error_streak += 1
-        log.warning("recovering from player error — skipping %s", current.title)
+        log.warning("recovering from dead stream — skipping %s", current.title)
         self.status.emit("Skipping past the bad stream…")
         self.next()
 
@@ -497,15 +544,42 @@ class PlaybackCore(QObject):
             return
         pos = self._player.position()
         if self._playing and pos == self._last_pos_ms:
-            # "Playing" but going nowhere: the stream died without ever
-            # raising an error. Give the watchdog a few polls, then rejoin.
-            self._stall_polls += 1
-            if self._stall_polls >= config.STALL_POLLS:
-                self._stall_polls = 0
-                current = self.engine.current
-                if current is not None:
-                    self._try_rejoin(current, "stalled")
+            # "Playing" but going nowhere — and the backend never said
+            # otherwise (a media that never opened sits in StoppedState
+            # and emits nothing, so _playing stays stale-True forever).
+            # Two sicknesses: a stream that played and froze wants a
+            # rejoin; one that never opened at all wants a bounded skip
+            # — re-feeding it was the other half of the v0.6.3 storm.
+            if not self._forgiving_status():
+                self._stall_polls += 1
+                if self._stall_polls >= config.STALL_POLLS:
+                    self._stall_polls = 0
+                    current = self.engine.current
+                    healed = (
+                        self._stream_played
+                        and current is not None
+                        and self._try_rejoin(current, "stalled")
+                    )
+                    if not healed:
+                        self._playing = False
+                        self._skip_or_stop(current)
+            # else: loading/buffering — alive, just shy; give it air
         else:
             self._stall_polls = 0
+            if pos > 0:
+                self._stream_played = True   # audio demonstrably flowing
             self._last_pos_ms = pos
         self.position_changed.emit(pos)
+
+    def _forgiving_status(self) -> bool:
+        """True while the backend is merely loading/buffering.
+
+        Judged by position alone, a slow open looks exactly like a dead
+        stream — this grace keeps slow networks off the stall-skip
+        path. Detached/fake backends (no mediaStatus) get no grace and
+        are judged by position, as before.
+        """
+        try:
+            return self._player.mediaStatus() in _waiting_statuses()
+        except (RuntimeError, AttributeError):
+            return False

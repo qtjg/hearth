@@ -262,8 +262,10 @@ def test_rejoin_budget_exhausts_then_skips(core):
     core._note_playing(True)
     core._last_pos_ms = 10_000
     for _ in range(config.STREAM_MAX_RECOVERIES):
-        core._on_error(0, "dies")          # three honest rejoin tries
+        core._on_error(0, "dies")          # three honest rejoin tries...
+        core._note_playing(True)           # ...each one landing before the next death
     assert len(lost) == config.STREAM_MAX_RECOVERIES
+    core._note_playing(True)
     core._on_error(0, "dies")              # budget gone -> skip fallback
     assert core.engine.current.video_id == "t1"
 
@@ -275,6 +277,7 @@ def test_healthy_playback_renews_rejoin_budget(core):
     core._stream_anchor_ms = 0
     core._on_error(0, "dies")              # rejoin #1
     assert core._retries == 1
+    core._note_playing(True)               # the rejoin lands: audio flows again
     core._last_pos_ms = 45_000             # 45s of healthy playback past the anchor
     core._on_error(0, "dies again")        # budget renewed -> fresh rejoin
     assert core._retries == 1
@@ -315,3 +318,147 @@ def test_advancing_position_never_stalls(core):
     for _ in range(config.STALL_POLLS * 2):
         core._emit_position()
     assert not lost
+
+
+# --- the v0.6.3 spam storm: a stream that never opened (dead URL /
+#     CDN 403) was re-fed to the backend forever — position alone
+#     can't vouch for "the song was underway", and a refused rejoin
+#     left the player a frozen zombie. Fixed by gating every heal on
+#     audio that demonstrably flowed, and giving every failure a
+#     bounded, honest ending (skip once, then stop). ---
+
+
+def test_resume_position_without_playback_never_rejoins(core):
+    # A restored session sits at its resume position before the first
+    # byte arrives. If the stream then fails to open, that position is
+    # NOT proof of playback: skip the track, never re-feed the URL.
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append(t.video_id))
+    core.start_queue(tracks(3), start=0)
+    core._last_pos_ms = 118_800            # resume point of a restored session
+    core._on_error(0, "Could not open media. FFmpeg error 403")
+    assert not lost                        # no rejoin spam
+    assert core.engine.current.video_id == "t1"
+
+
+def test_never_opened_stream_is_skipped_by_watchdog(core):
+    # set_stream() accepted a dead URL: the backend stays Stopped, emits
+    # nothing, and _playing sits stale-True. The watchdog must end the
+    # silence with a skip — not re-feed the URL, not freeze forever.
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append(t.video_id))
+    core.start_queue(tracks(2), start=0)
+
+    class NeverOpens:
+        def position(self):
+            return 0
+
+    core._player = NeverOpens()
+    core._playing = True                   # stale from set_stream
+    core._last_pos_ms = 0
+    for _ in range(config.STALL_POLLS):
+        core._emit_position()
+    assert not lost                        # nothing played -> nothing to rejoin
+    assert core.engine.current.video_id == "t1"
+    assert not core._playing
+
+
+def test_watchdog_rejoin_refused_then_skips(core):
+    # A played stream freezes, but the rejoin budget is gone: the old
+    # code ignored the refusal and zombie-ed forever. Now: skip.
+    core.start_queue(tracks(2), start=0)
+
+    class Frozen:
+        def position(self):
+            return 90_000
+
+    core._player = Frozen()
+    core._note_playing(True)
+    core._last_pos_ms = 90_000
+    core._stream_anchor_ms = 90_000        # no healthy-playback renewal
+    core._retries = config.STREAM_MAX_RECOVERIES   # budget already spent
+    core._recovered_id = "t0"
+    for _ in range(config.STALL_POLLS):
+        core._emit_position()
+    assert core.engine.current.video_id == "t1"
+
+
+def test_buffering_media_gets_stall_grace(core):
+    # A slow open (LoadingMedia/BufferingMedia) is alive, just shy:
+    # frozen position alone must not trip the watchdog into a skip.
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append(t.video_id))
+    core.start_queue(tracks(2), start=0)
+
+    class Buffering:
+        def position(self):
+            return 0
+
+        def mediaStatus(self):
+            from PyQt6.QtMultimedia import QMediaPlayer
+
+            return QMediaPlayer.MediaStatus.BufferingMedia
+
+    core._player = Buffering()
+    core._playing = True
+    core._last_pos_ms = 0
+    for _ in range(config.STALL_POLLS * 3):
+        core._emit_position()
+    assert not lost
+    assert core.engine.current.video_id == "t0"   # still waiting, untouched
+
+
+def test_position_progress_marks_stream_played(core):
+    core.start_queue(tracks(1), start=0)
+    assert not core._stream_played
+
+    class SlowStart:
+        """Frozen at zero first (still opening), then audio flows."""
+
+        def __init__(self):
+            self.n = 0
+
+        def position(self):
+            self.n += 500
+            return min(0, self.n - 500) if self.n <= 500 else self.n
+
+    core._player = SlowStart()
+    core._playing = True
+    core._emit_position()                  # frozen at 0, "playing": stall counting
+    assert not core._stream_played         # no audio yet — no proof
+    core._emit_position()                  # 500ms: position moved
+    assert core._stream_played             # audio demonstrably flowing
+
+
+def test_set_stream_resets_played_proof(core):
+    # A fresh set_stream forgets the old stream's good name: the next
+    # URL must earn its rejoin rights with its own audio.
+    core.start_queue(tracks(1), start=0)
+    core._stream_played = True
+    core._recovered_id = None
+
+    class Mutable:
+        def setSource(self, url):
+            pass
+
+        def setPlaybackRate(self, rate):
+            pass
+
+        def play(self):
+            pass
+
+        def setPosition(self, ms):
+            pass
+
+    core._player = Mutable()
+    core.set_stream(tracks(1)[0], "https://example.com/a.mp3")
+    assert not core._stream_played
+
+
+def test_stop_resets_playing_and_poll(core):
+    core.start_queue(tracks(1), start=0)
+    core._playing = True
+    core._poll.start()
+    core.stop()
+    assert not core._playing
+    assert not core._poll.isActive()

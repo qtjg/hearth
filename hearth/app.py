@@ -8,7 +8,7 @@ import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool
+from PyQt6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool, QtMsgType
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
@@ -63,6 +63,53 @@ def setup_logging(directory: Path) -> None:
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     handler.setFormatter(fmt)
     logging.basicConfig(level=logging.INFO, handlers=[handler])
+    _install_qt_log_bridge()
+
+
+def _qt_message(mode, context, message) -> None:  # noqa: ANN001 - Qt's signature
+    """One Qt message, routed into Python's logging instead of stderr.
+
+    Qt prints straight to the process stderr — one failed stream open
+    used to paint the terminal with endless 'Could not open media'
+    lines (v0.6.3). The bridge lands every Qt message in hearth.log
+    instead: the playback firehose at DEBUG, everything else at its
+    natural severity. Defensive throughout — this runs for every Qt
+    message, on any thread, possibly during interpreter teardown.
+    """
+    try:
+        raw = getattr(context, "category", b"") or b""
+        category = (
+            raw.decode("utf-8", "replace")
+            if isinstance(raw, (bytes, bytearray)) else str(raw)
+        )
+        text = (
+            message.decode("utf-8", "replace")
+            if isinstance(message, (bytes, bytearray)) else str(message)
+        )
+        logger = logging.getLogger(f"qt.{category}" if category else "qt")
+        if category.startswith("qt.multimedia"):
+            level = logging.DEBUG   # per-attempt backend chatter: file-only, quiet
+        else:
+            level = {
+                QtMsgType.QtDebugMsg: logging.DEBUG,
+                QtMsgType.QtInfoMsg: logging.INFO,
+                QtMsgType.QtWarningMsg: logging.WARNING,
+                QtMsgType.QtCriticalMsg: logging.ERROR,
+                QtMsgType.QtFatalMsg: logging.CRITICAL,
+            }.get(mode, logging.WARNING)
+        logger.log(level, "%s", text)
+    except Exception:  # noqa: BLE001 - a dying log must never take the app down
+        pass
+
+
+def _install_qt_log_bridge() -> None:
+    """Replace Qt's default stderr printer with `_qt_message` (best effort)."""
+    try:
+        from PyQt6.QtCore import qInstallMessageHandler
+
+        qInstallMessageHandler(_qt_message)
+    except Exception:  # noqa: BLE001 - no PyQt6 here: keep the default behavior
+        pass
 
 
 class Hearth:

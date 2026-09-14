@@ -45,3 +45,45 @@ def test_pick_track_writes_history_and_updates_panel(tmp_path, qapp):
     assert len(hearth.store.history()) == 1
     assert hearth.panel._title.text() != "Hearth — nothing playing yet"
     hearth.shutdown()
+
+
+# --- Qt message bridge: the terminal firehose tamer (v0.6.3 audit) ---
+
+
+def test_qt_messages_route_to_logging_not_stderr(caplog):
+    import logging
+    from types import SimpleNamespace
+
+    from PyQt6.QtCore import QtMsgType
+
+    from hearth.app import _qt_message
+
+    with caplog.at_level(logging.DEBUG, logger="qt"):
+        # the exact line that flooded MAYANK's terminal, now file-only DEBUG
+        _qt_message(
+            QtMsgType.QtWarningMsg,
+            SimpleNamespace(category=b"qt.multimedia.ffmpeg.mediadataholder"),
+            b"Could not open media. FFmpeg error 403",
+        )
+        # ordinary Qt warnings keep their natural severity
+        _qt_message(
+            QtMsgType.QtWarningMsg,
+            SimpleNamespace(category=b"qt.qpa.xcb"),
+            b"could not connect to display",
+        )
+        # str payloads and empty categories must not crash the handler
+        _qt_message(QtMsgType.QtCriticalMsg, SimpleNamespace(category=None), "plain text")
+
+    by_name = {r.name: r for r in caplog.records}
+    multimedia = by_name["qt.qt.multimedia.ffmpeg.mediadataholder"]
+    assert multimedia.levelno == logging.DEBUG
+    assert "Could not open media" in multimedia.message
+    assert by_name["qt.qt.qpa.xcb"].levelno == logging.WARNING
+    assert by_name["qt"].levelno == logging.ERROR
+
+
+def test_qt_bridge_is_installed_on_boot(tmp_path, qapp):
+    from PyQt6.QtCore import qInstallMessageHandler
+
+    make_hearth(tmp_path).shutdown()
+    assert qInstallMessageHandler(None) is not None  # something was installed
