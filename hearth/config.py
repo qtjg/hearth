@@ -54,6 +54,13 @@ SEARCH_DEBOUNCE_MS = 350
 SEEK_POLL_MS = 500
 FADE_STEPS = 15
 FADE_INTERVAL_MS = 1000  # total sleep-timer fade window (steps * interval)
+
+# Stream self-healing: YouTube's single-shot URLs occasionally die mid-song
+# (CDN 403, connection drop) and QMediaPlayer just sits down without us.
+STREAM_MAX_RECOVERIES = 3         # rejoin attempts per track before giving up
+STREAM_RECOVERY_RESET_MS = 30_000  # this much healthy playback renews the budget
+STREAM_RESUME_BACKSTEP_MS = 1_200  # rewind a little on rejoin so we never land on the last byte
+STALL_POLLS = 24                   # frozen position while "playing" for this many polls = dead stream
 RETRY_ATTEMPTS = 3
 RETRY_BASE_DELAY = 0.5
 

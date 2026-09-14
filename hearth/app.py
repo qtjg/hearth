@@ -204,6 +204,7 @@ class Hearth:
         self.core.repeat_changed.connect(lambda m: self._persist())
         self.core.rate_changed.connect(lambda r: self._persist())
         self.core.queue_dry.connect(self._on_queue_dry)
+        self.core.stream_lost.connect(self._on_stream_lost)
         self.core.rate_changed.connect(
             lambda r: self.window.player_bar.set_speed_label(r)
         )
@@ -615,6 +616,21 @@ class Hearth:
         self.window.set_queue(
             list(self.core.engine.upcoming), self.core.engine.current
         )
+
+    def _on_stream_lost(self, track: Track, resume_ms: int) -> None:
+        """The player died mid-song: re-resolve a fresh URL and rejoin it."""
+        if not self._enable_streaming:
+            return  # test mode: keep the playback pool out of unit tests
+        job = LoadJob(track)
+        job.signals.finished.connect(
+            lambda payload: self.core.set_stream(
+                payload[2], payload[0], payload[1], resume_ms=resume_ms
+            )
+        )
+        job.signals.failed.connect(
+            lambda title: self.surface.set_status(f"Could not rejoin: {title}")
+        )
+        self._launch(job)
 
     def _on_track_changed(self, track: Track | None) -> None:
         self.panel.set_track(track)

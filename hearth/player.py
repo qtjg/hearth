@@ -319,20 +319,61 @@ class PlaybackCore(QObject):
 
     # --- internals ---
 
-    def set_stream(self, track: Track, url: str, loudness_db: float | None = None) -> None:
-        """Load a resolved stream URL and start playing (called from LoadJob callback)."""
+    def set_stream(
+        self,
+        track: Track,
+        url: str,
+        loudness_db: float | None = None,
+        resume_ms: int = 0,
+    ) -> None:
+        """Load a resolved stream URL and start playing (LoadJob callback).
+
+        `resume_ms` rejoins a track that died mid-song: the position it
+        stopped at, minus a small backstep so a truncating stream can't
+        tip us straight back into end-of-media.
+        """
         if not self._ensure_backend():
             return
         if self.engine.current is not None and self.engine.current.video_id != track.video_id:
             return  # user moved on while we were resolving
+        if self._recovered_id != track.video_id:
+            self._recovered_id = track.video_id
+            self._retries = 0  # a fresh track gets a fresh budget
         self.apply_normalization(loudness_db)
         from PyQt6.QtCore import QUrl
 
+        rejoin = max(0, int(resume_ms) - config.STREAM_RESUME_BACKSTEP_MS) if resume_ms else 0
         self._player.setSource(QUrl(url))
         self._player.setPlaybackRate(self._rate)
         self._player.play()
+        if rejoin:
+            self._player.setPosition(rejoin)
         self._poll.start()
+        self._playing = True  # the backend signal confirms or corrects
+        self._last_pos_ms = rejoin
+        self._stream_anchor_ms = rejoin
+        self._stall_polls = 0
         self.state_changed.emit(True)
+
+    def _try_rejoin(self, track: Track, reason: str) -> bool:
+        """Ask for a freshly resolved URL and rejoin this very song.
+
+        Budget-guarded (config STREAM_*): the budget renews once the
+        stream has played healthily for a while, so one flaky minute
+        can't strand the session — but a truly dead track falls through
+        to the error-skip path after a few honest tries.
+        """
+        if self._last_pos_ms - self._stream_anchor_ms >= config.STREAM_RECOVERY_RESET_MS:
+            self._retries = 0   # it genuinely played — this is a new mishap
+        if self._recovered_id != track.video_id:
+            self._recovered_id = track.video_id
+            self._retries = 0
+        if self._retries >= config.STREAM_MAX_RECOVERIES:
+            return False
+        self._retries += 1
+        self.status.emit(f"Stream {reason} — picking it back up…")
+        self.stream_lost.emit(track, int(self._last_pos_ms))
+        return True
 
     def _on_playback_state(self, state) -> None:
         from PyQt6.QtMultimedia import QMediaPlayer
@@ -340,6 +381,7 @@ class PlaybackCore(QObject):
         self._note_playing(state == QMediaPlayer.PlaybackState.PlayingState)
 
     def _note_playing(self, playing: bool) -> None:
+        self._playing = playing
         if playing:
             self._recover_armed = True   # audio actually flowed — re-arm the skip guard
         self.state_changed.emit(playing)
@@ -366,21 +408,39 @@ class PlaybackCore(QObject):
 
     def _on_error(self, err, err_str: str) -> None:
         log.warning("player error: %s", err_str)
-        self.status.emit(f"Playback error: {err_str}")
         self.state_changed.emit(False)
         current = self.engine.current
-        if current is None or not self._recover_armed:
-            return  # nothing to recover, or we already skipped without hearing audio
-        self._recover_armed = False
-        self._error_streak += 1
-        if self._error_streak > self.MAX_ERROR_SKIPS:
+        if current is None:
+            self.status.emit(f"Playback error: {err_str}")
+            return
+        # The song was audibly underway: rejoin it with a fresh URL and
+        # pick up where it stopped, instead of losing it to a skip.
+        if self._last_pos_ms > 0 and self._try_rejoin(current, "dropped"):
+            return
+        if not self._recover_armed or self._error_streak >= self.MAX_ERROR_SKIPS:
             self.stop()
             self.status.emit("Playback stopped — too many errors in a row")
             return
+        self._recover_armed = False
+        self._error_streak += 1
         log.warning("recovering from player error — skipping %s", current.title)
         self.status.emit("Skipping past the bad stream…")
         self.next()
 
     def _emit_position(self) -> None:
-        if self._player is not None:
-            self.position_changed.emit(self._player.position())
+        if self._player is None:
+            return
+        pos = self._player.position()
+        if self._playing and pos == self._last_pos_ms:
+            # "Playing" but going nowhere: the stream died without ever
+            # raising an error. Give the watchdog a few polls, then rejoin.
+            self._stall_polls += 1
+            if self._stall_polls >= config.STALL_POLLS:
+                self._stall_polls = 0
+                current = self.engine.current
+                if current is not None:
+                    self._try_rejoin(current, "stalled")
+        else:
+            self._stall_polls = 0
+            self._last_pos_ms = pos
+        self.position_changed.emit(pos)

@@ -231,3 +231,87 @@ def test_error_streak_gives_up(core):
         core._note_playing(True)      # each track starts...
         core._on_error(0, "dead")     # ...then dies mid-play
     assert core.engine.current.video_id == f"t{core.MAX_ERROR_SKIPS}"
+
+
+# --- mid-song rejoin (v0.6.3): a stream that dies while audibly playing
+#     gets a fresh URL and rejoins where it stopped, instead of a skip ---
+
+
+def test_mid_song_error_rejoins_same_track(core):
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append((t.video_id, ms)))
+    core.start_queue(tracks(2), start=0)
+    core._note_playing(True)
+    core._last_pos_ms = 154_000            # 2:34 into the song — audibly underway
+    core._on_error(0, "CDN 403")
+    assert lost == [("t0", 154_000)]       # same song, resume position kept
+    assert core.engine.current.video_id == "t0"
+
+
+def test_error_at_position_zero_still_skips(core):
+    # Nothing played yet: there is no song to rejoin, skip as before.
+    core.start_queue(tracks(2), start=0)
+    core._on_error(0, "bad url")
+    assert core.engine.current.video_id == "t1"
+
+
+def test_rejoin_budget_exhausts_then_skips(core):
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append(t.video_id))
+    core.start_queue(tracks(3), start=0)
+    core._note_playing(True)
+    core._last_pos_ms = 10_000
+    for _ in range(config.STREAM_MAX_RECOVERIES):
+        core._on_error(0, "dies")          # three honest rejoin tries
+    assert len(lost) == config.STREAM_MAX_RECOVERIES
+    core._on_error(0, "dies")              # budget gone -> skip fallback
+    assert core.engine.current.video_id == "t1"
+
+
+def test_healthy_playback_renews_rejoin_budget(core):
+    core.start_queue(tracks(1), start=0)
+    core._note_playing(True)
+    core._last_pos_ms = 10_000
+    core._stream_anchor_ms = 0
+    core._on_error(0, "dies")              # rejoin #1
+    assert core._retries == 1
+    core._last_pos_ms = 45_000             # 45s of healthy playback past the anchor
+    core._on_error(0, "dies again")        # budget renewed -> fresh rejoin
+    assert core._retries == 1
+
+
+def test_stall_watchdog_rejoins_frozen_stream(core):
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append((t.video_id, ms)))
+    core.start_queue(tracks(1), start=0)
+
+    class Frozen:
+        def position(self):
+            return 90_000
+
+    core._player = Frozen()
+    core._note_playing(True)
+    core._last_pos_ms = 90_000
+    for _ in range(config.STALL_POLLS):
+        core._emit_position()
+    assert lost == [("t0", 90_000)]
+
+
+def test_advancing_position_never_stalls(core):
+    lost = []
+    core.stream_lost.connect(lambda t, ms: lost.append(t.video_id))
+    core.start_queue(tracks(1), start=0)
+
+    class Ticking:
+        def __init__(self):
+            self.n = 0
+
+        def position(self):
+            self.n += 500
+            return self.n
+
+    core._player = Ticking()
+    core._note_playing(True)
+    for _ in range(config.STALL_POLLS * 2):
+        core._emit_position()
+    assert not lost
