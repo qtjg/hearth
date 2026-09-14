@@ -7,7 +7,7 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=72&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Gradients+%C2%B7+glows+%C2%B7+3D+covers+%C2%B7+crossfades;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-268%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![tests](https://img.shields.io/badge/tests-323%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
 ![version](https://img.shields.io/badge/version-v0.6.3-ff7a18?style=flat-square)
 ![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
@@ -19,12 +19,14 @@
 
 *Sidebar navigation · Home shelves · Playlists · Now Playing with lyrics · Endless radio · Runs where you run*
 
+<img src="docs/assets/ember-divider.svg" width="100%" alt=""/>
+
 </div>
 
 <details open>
 <summary><strong>📑 Jump around</strong> — the whole README, indexed</summary>
 
-[🧊 The System, in 3D](#-the-system-in-3d) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🪞 Glass & Motion v0.6.2](#-glass--motion--the-2020s-pass-v062) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
+[🧊 The System, in 3D](#-the-system-in-3d) · [🔥 The Immune System](#-the-immune-system--self-healing-playback-v063) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🪞 Glass & Motion v0.6.2](#-glass--motion--the-2020s-pass-v062) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
 
 </details>
 
@@ -47,7 +49,9 @@ resolves through the **catalog** (guest API, link parsing, exponential retry
 backoff, loudness hints), and finally lands on the **sources** — `yt-dlp` for
 streams, YT Music's guest API for search, radio and lyrics. Your data never
 leaves the machine: SQLite keeps favorites, history and playlists, QSettings
-keeps the knobs.
+keeps the knobs. The mermaid flowchart below traces one request end to end —
+and if you want the moving picture of the *failure* paths, the 🔥 [immune
+system](#-the-immune-system--self-healing-playback-v063) has its own diagram.
 
 ```mermaid
 flowchart LR
@@ -63,17 +67,37 @@ flowchart LR
     C --> J["LyricsJob"] --> K["📝 Now Playing lyrics"]
 ```
 
+### 🔥 The immune system — self-healing playback (v0.6.3)
+
+Streams die — CDN 403s, dropped sockets, URLs that never open. The audio core
+treats every failure honestly, and the whole immune system is one moving
+picture:
+
+<img src="docs/assets/selfheal-3d.svg" width="100%" alt="Isometric 3D diagram of Hearth's self-healing playback: a stream platform feeding the playback core through a pulsing 403 glitch, a proof-of-audio gate, and three floating outcomes — rejoin with a fresh URL, skip once per proven track, or halt with an honest stop"/>
+
+- **↺ Rejoin** — a stream that *audibly played* and died mid-song gets a fresh
+  URL and rejoins where it stopped. Budget: three tries, renewed by 30 seconds
+  of healthy playback, so one flaky minute can't strand the session.
+- **⇥ Skip** — a stream that never opened (dead URL, CDN 403) is skipped **once
+  per proven track** and *never re-fed* — re-feeding it was the
+  `Could not open media` spam storm, now gone.
+- **■ Halt** — three dead tracks in a row end in a clean stop with a clear
+  status: no silent zombie pauses, no flooded terminal. Qt's own chatter now
+  lands in the rotating `hearth.log` instead of stderr, demoted to debug.
+
 <details>
 <summary>🧊 About the 3D artwork</summary>
 
 All of them are committed SVGs rendered with isometric polygons, layered
 gradients and SMIL keyframe animations (`animate`, `animateTransform`,
 `animateMotion`), so they animate inside GitHub's sanitized `<img>` pipeline
-with **zero** JavaScript and **zero** third-party requests. Want them
-standalone? Open
+with **zero** JavaScript and **zero** third-party requests. The 🔥 ember
+dividers dance between sections on the same diet. Want them standalone? Open
 [`docs/assets/hero-3d.svg`](docs/assets/hero-3d.svg),
-[`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg) or
-[`docs/assets/spotlight-3d.svg`](docs/assets/spotlight-3d.svg) in any browser
+[`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg),
+[`docs/assets/spotlight-3d.svg`](docs/assets/spotlight-3d.svg),
+[`docs/assets/selfheal-3d.svg`](docs/assets/selfheal-3d.svg) or
+[`docs/assets/ember-divider.svg`](docs/assets/ember-divider.svg) in any browser
 and watch the equalizer dance, the stack hover and the lyric beam flow in
 real time.
 
@@ -92,7 +116,7 @@ GitHub theme:
   <img src="https://raw.githubusercontent.com/qtjg/hearth/output/github-contribution-grid-snake.svg" width="100%" alt="Contribution graph snake"/>
 </picture>
 
----
+<img src="docs/assets/ember-divider.svg" width="100%" alt=""/>
 
 ## 📸 Inside the Hearth
 
@@ -324,7 +348,7 @@ Five ships, five waves — each one a full layer of the app:
 | v0.6 | 🌍 Discover + 🗺️ World Explorer | the whole YT Music catalogue + a 74-station world dial |
 | v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
 | v0.6.2 | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades |
-| **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, dead streams get skipped or rejoined mid-song — **current release** |
+| **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, streams that die mid-song get rejoined, dead URLs are skipped once and never re-fed, no spam storms, no zombie pauses — **current release** |
 
 ### 🆕 New stuff — the add-on map
 
@@ -333,7 +357,7 @@ lives, and the fastest way to feel it:
 
 | Add-on | Wave | Where it lives | Try this first |
 |:---|:---|:---|:---|
-| 🔥 **Self-healing playback** | v0.6.3 | the audio core | start a radio and walk away — finished tracks roll on by themselves, and a stream that dies mid-song gets skipped (or rejoined) without you lifting a finger |
+| 🔥 **Self-healing playback** | v0.6.3 | the audio core | start a radio and walk away — finished tracks roll on by themselves, a stream that dies mid-song gets rejoined, and a URL that never opens is skipped once, never re-fed |
 | 🪞 **Glass & Motion** | v0.6.2 | the entire window | swap to **Frost** or **Orchid** in the tray — every gradient, glow and 3D cover repaints itself |
 | 🪩 **3D covers & reflections** | v0.6.2 | Now Playing & every card grid | press `N` — the cover floats on an accent halo over a fading floor mirror |
 | 🎤 **Artist pages** | v0.6.1 | right-click any track → *🎤 Artist page* | shuffle the **Top tracks**, then hop the **Fans also like** rail |
@@ -351,7 +375,7 @@ lyric lines glow in time — click one to send the song there → finish on the
 player bar: swap themes and watch the whole 🪞 glass layer recolor itself.
 That's the last four releases in one lap of the room.
 
----
+<img src="docs/assets/ember-divider.svg" width="100%" alt=""/>
 
 ## ✨ What It Does
 
@@ -484,7 +508,7 @@ hearth/
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
 ├── docs/assets/        → animated 3D SVG artwork, banner art & screenshots used by this README
-├── tests/              → 268 headless tests (offscreen Qt platform)
+├── tests/              → 323 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -495,13 +519,15 @@ hearth/
 
 ## 🧪 Testing
 
-268 tests cover models, palettes, playlists, share codecs, storage, retry
+323 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
 caching, LRC parsing, the LRCLIB fallback ladder, artist-page mapping
 (catalogue, jobs, view, app drill-down), hotkey conflicts, the genre
 universe (every dial described, seed rotation), search-everywhere fallback
 ladders, the main window (views, player bar, queue dock with drag & drop,
-pin flow), and the real app booting headless:
+pin flow), the player's full immune system (rejoin budgets, dead-URL skips,
+watchdog stalls, buffering grace, the proof-of-audio gate), the Qt message
+bridge, and the real app booting headless:
 
 ```bash
 QT_QPA_PLATFORM=offscreen python -m pytest tests/ -v
@@ -531,7 +557,7 @@ main version — **v0.7.0 "The Big Burn"** — four rooms, built in order:
   hooks, multi-language UI, smart shuffle
 
 The fire is lit: the On Repeat engine + home shelf, day-grouped history,
-listening stats and queue persistence have already landed — 290 tests green.
+listening stats and queue persistence have already landed — 323 tests green.
 
 ---
 
