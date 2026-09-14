@@ -363,6 +363,10 @@ class Hearth:
         self.core.state_changed.connect(
             lambda _playing: self._update_visualizer_state()
         )
+        # crossfade groundwork: the core decides when, the app resolves
+        # (its handler keeps test mode off the network, like _on_stream_lost)
+        self.core.preresolve_requested.connect(self._on_preresolve)
+        self.window.now_view.crossfade_changed.connect(self._on_crossfade_changed)
 
     def _build_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -818,6 +822,33 @@ class Hearth:
         )
         self._launch(job)
 
+    def _on_preresolve(self, track: Track) -> None:
+        """Crossfade groundwork: resolve the NEXT stream while this one plays.
+
+        Runs on the same playback pool as every LoadJob. A failure lands
+        nowhere at all — the core drops the pre-resolve and the normal
+        EndOfMedia path resolves fresh, exactly as it always has.
+        """
+        if not self._enable_streaming:
+            return  # test mode: keep the playback pool out of unit tests
+        if track is None:
+            return
+        job = LoadJob(track)
+        job.signals.finished.connect(
+            lambda payload: self.core.prime_shadow(payload[2], payload[0],
+                                                   payload[1])
+        )
+        self._launch(job)
+
+    def _on_crossfade_changed(self, seconds: int) -> None:
+        """The Now Playing slider moved: apply live + remember it."""
+        self.core.set_crossfade(int(seconds))
+        self.settings.setValue("crossfade", self.core.crossfade_seconds)
+        if seconds:
+            self.surface.set_status(f"Crossfade: {int(seconds)}s")
+        else:
+            self.surface.set_status("Crossfade off")
+
     def _on_track_changed(self, track: Track | None) -> None:
         self.panel.set_track(track)
         self.window.set_track(track)
@@ -1223,6 +1254,10 @@ class Hearth:
             autoplay in (True, "true", "True", "1", 1)
             if isinstance(autoplay, (str, int)) else bool(autoplay)
         )
+        # crossfade length (whole seconds; 0 = off)
+        crossfade = self._int_setting("crossfade", config.CROSSFADE_DEFAULT_SECONDS)
+        self.core.set_crossfade(crossfade)
+        self.window.set_crossfade(self.core.crossfade_seconds)
         # lyrics settings: size preset + family for every lyric surface
         size_key = str(self.settings.value("lyrics/size",
                                            config.LYRICS_DEFAULT_SIZE_KEY))
@@ -1274,6 +1309,7 @@ class Hearth:
         self.settings.setValue("rate", self.core.rate)
         self.settings.setValue("repeat", self.core.engine.repeat)
         self.settings.setValue("autoplay", self.core.autoplay)
+        self.settings.setValue("crossfade", self.core.crossfade_seconds)
         self.settings.setValue("theme", self.panel._palette.key)
         self.settings.setValue("ui/style", theme.active_style())
         self.settings.setValue("ui/wallpaper_alpha", self._wallpaper_alpha)

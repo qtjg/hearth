@@ -129,6 +129,8 @@ IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif")
 # --- v1.0.0 groundwork ---
 CROSSFADE_ENABLED = False       # opt-in dual-player crossfade
 CROSSFADE_MAX_MS = 3000         # upper bound of the crossfade slider
+CROSSFADE_TICK_MS = 100         # ramp resolution: ten volume steps per second
+CROSSFADE_DEFAULT_SECONDS = 0   # off until the user drags the slider
 
 # --- v0.8.0 controls: smart shuffle, wake-up alarm, mini-visualizer ---
 SMART_SHUFFLE = False            # artist-spread shuffle instead of pure random (opt-in)

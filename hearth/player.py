@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import math
 import random
 from collections import deque
+from typing import Callable
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -36,6 +38,281 @@ def _waiting_statuses() -> frozenset:
         except Exception:  # noqa: BLE001 - no multimedia module: no grace
             _WAITING_STATUSES = frozenset()
     return _WAITING_STATUSES
+
+
+# --- crossfade groundwork (v1.0.0): equal-power ramp + twin handles ---
+
+
+def fade_pair(progress: float, seconds: int) -> tuple[float, float]:
+    """Equal-power crossfade pair at `progress` in (current, next) factors.
+
+    Equal-power (cos/sin) keeps the *perceived* loudness flat across the
+    seam — a linear pair dips roughly 3 dB at the midpoint because two
+    half-volume sources don't add up to one full one. Endpoints are
+    exact: progress 0 → (1, 0), progress 1 → (0, 1), the midpoint sits
+    at ≈ (0.707, 0.707). `progress` is clamped to [0, 1]. `seconds` <= 0
+    means "no fade at all": unity for the current track, silence for
+    the next, whatever the progress.
+    """
+    if seconds <= 0:
+        return 1.0, 0.0
+    p = max(0.0, min(1.0, float(progress)))
+    if p <= 0.0:
+        return 1.0, 0.0        # exact endpoints: no float dust at the seams
+    if p >= 1.0:
+        return 0.0, 1.0
+    angle = p * math.pi / 2
+    return math.cos(angle), math.sin(angle)
+
+
+class MediaHandle:
+    """The sliver of a media player a crossfade twin needs.
+
+    The CrossfadeController drives handles through exactly these six
+    members — start/stop/set_volume/position_ms/duration_ms/error_count
+    — and nothing else. PlaybackCore may use the setup extras (load,
+    set_rate) while priming a shadow. Production uses QtMediaHandle (a
+    QMediaPlayer + QAudioOutput pair); tests inject fakes.
+    """
+
+    errors: int = 0   # backend errors observed on this handle
+
+    def load(self, url: str) -> None:
+        """Set the source WITHOUT playing (prime time)."""
+
+    def start(self, position_ms: int = 0) -> None:
+        """Begin playback, optionally from a position."""
+
+    def stop(self) -> None:
+        """Halt playback."""
+
+    def set_volume(self, factor: float) -> None:
+        """Absolute output volume, clamped 0..1."""
+
+    def set_rate(self, rate: float) -> None:
+        """Playback speed (shadow setup only; not driven by the controller)."""
+
+    @property
+    def position_ms(self) -> int:
+        return 0
+
+    @property
+    def duration_ms(self) -> int:
+        return 0
+
+    @property
+    def error_count(self) -> int:
+        return self.errors
+
+
+class QtMediaHandle(MediaHandle):
+    """A real QMediaPlayer + QAudioOutput pair behind a MediaHandle."""
+
+    def __init__(self, parent: QObject | None = None):
+        from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
+
+        # Both Qt objects are parented to the core when one is given, so
+        # a promoted (or dropped) handle's wrapper can be garbage-collected
+        # without ever dangling the live audio output underneath it.
+        self.audio = QAudioOutput(parent)
+        self.player = QMediaPlayer(parent)
+        self.player.setAudioOutput(self.audio)
+        self.errors = 0
+        self.player.errorOccurred.connect(self._note_error)
+
+    def _note_error(self, _err, _err_str: str) -> None:
+        self.errors += 1
+
+    def load(self, url: str) -> None:
+        from PyQt6.QtCore import QUrl
+
+        self.player.setSource(QUrl(url))
+
+    def start(self, position_ms: int = 0) -> None:
+        self.player.play()
+        if position_ms:
+            self.player.setPosition(int(position_ms))
+
+    def stop(self) -> None:
+        self.player.stop()
+
+    def set_volume(self, factor: float) -> None:
+        self.audio.setVolume(max(0.0, min(1.0, float(factor))))
+
+    def set_rate(self, rate: float) -> None:
+        self.player.setPlaybackRate(float(rate))
+
+    @property
+    def position_ms(self) -> int:
+        try:
+            return int(self.player.position())
+        except RuntimeError:
+            return 0
+
+    @property
+    def duration_ms(self) -> int:
+        try:
+            return int(self.player.duration())
+        except RuntimeError:
+            return 0
+
+    @property
+    def error_count(self) -> int:
+        return self.errors
+
+
+class _LiveBackendHandle(MediaHandle):
+    """Adapts the PlaybackCore's live backend into a MediaHandle.
+
+    The controller's ramp-out leg only needs volume (the outgoing track
+    is already finished when an EndOfMedia crossfade starts); position
+    reads through for completeness. The adapter is evergreen — it always
+    targets whatever backend the core currently fronts, so it stays
+    valid across promotions.
+    """
+
+    def __init__(self, core: "PlaybackCore"):
+        self._core = core
+
+    def start(self, position_ms: int = 0) -> None:
+        return   # the core drives its own backend
+
+    def stop(self) -> None:
+        return
+
+    def set_volume(self, factor: float) -> None:
+        out = self._core._audio_out
+        if out is not None:
+            try:
+                out.setVolume(max(0.0, min(1.0, float(factor))))
+            except (RuntimeError, AttributeError):
+                pass
+
+    @property
+    def position_ms(self) -> int:
+        return self._core.position_ms
+
+    @property
+    def duration_ms(self) -> int:
+        return 0   # not used by the EndOfMedia-engage design
+
+
+class CrossfadeController:
+    """Pure crossfade state machine over two injectable media handles.
+
+    IDLE → PRIMED (next track resolved + loaded on a shadow) →
+    CROSSFADING (both rolling, volumes ramped) → DONE (promoted).
+
+    It never touches QMediaPlayer: it drives two `MediaHandle` twins.
+    Production wires `on_promote` to PlaybackCore's promotion (swap the
+    shadow in as the primary, then advance the queue exactly once);
+    tests inject recording fakes. Timings come from an injectable tick
+    interval, so no real timers are needed to test the ramp.
+    """
+
+    IDLE = "idle"
+    PRIMED = "primed"
+    CROSSFADING = "crossfading"
+    DONE = "done"
+
+    def __init__(self, seconds: int = 0,
+                 tick_ms: int = 100,
+                 on_promote: Callable[[], None] | None = None):
+        self.seconds = max(0, int(seconds))
+        self.tick_ms = max(1, int(tick_ms))
+        self.on_promote = on_promote   # fired exactly once, at ramp end
+        self.state: str = self.IDLE
+        self.current: MediaHandle | None = None   # live primary (ramp-out leg)
+        self.shadow: MediaHandle | None = None    # primed next track
+        self.primed_track: object | None = None   # Track the shadow carries
+        self.base_volume: float = 0.8   # the core's master volume, kept synced
+        self.progress: float = 0.0
+        self._steps = 0
+        self._ticked = 0
+        self._promoted = False
+
+    def adopt(self, current: MediaHandle | None = None) -> None:
+        """(Re)arm for a new round: drop any primed/crossfading state.
+
+        Any shadow still holding the floor is stopped. Promotion hands
+        the shadow off to the core itself, so by the time the next
+        adopt() runs the reference is already clear and nothing live
+        gets stopped by accident.
+        """
+        if self.shadow is not None:
+            try:
+                self.shadow.stop()
+            except (RuntimeError, AttributeError):
+                pass
+        self.shadow = None
+        self.primed_track = None
+        self.state = self.IDLE
+        self.progress = 0.0
+        self._ticked = 0
+        self._promoted = False
+        if current is not None:
+            self.current = current
+
+    def prime(self, shadow: MediaHandle, track) -> bool:
+        """A resolved next track is loaded on the shadow. IDLE → PRIMED."""
+        if self.state != self.IDLE or shadow is None or track is None:
+            return False
+        self.shadow = shadow
+        self.primed_track = track
+        self.state = self.PRIMED
+        self._promoted = False
+        self._ticked = 0
+        self.progress = 0.0
+        return True
+
+    def end_of_media(self) -> bool:
+        """The current track finished naturally.
+
+        True = the crossfade took over (the caller must NOT advance the
+        queue — the promotion does that, exactly once). False = fall
+        back to the legacy path. Any doubt returns False: missing or
+        errored shadow, crossfade off. A relay landing mid-ramp or post-
+        promotion is absorbed (True, no new ramp) — THE double-advance
+        guard.
+        """
+        if self.seconds <= 0:
+            return False
+        if self.state in (self.CROSSFADING, self.DONE):
+            return True   # duplicate relay: already fading/faded
+        if self.state != self.PRIMED or self.shadow is None or self.current is None:
+            return False
+        if self.shadow.error_count > 0:
+            return False   # the primed stream already hiccuped — legacy path
+        self.state = self.CROSSFADING
+        self._steps = max(1, int(round(self.seconds * 1000 / self.tick_ms)))
+        self._ticked = 0
+        self.progress = 0.0
+        self.shadow.set_volume(0.0)
+        self.shadow.start(0)
+        return True
+
+    def tick(self) -> bool:
+        """One ramp step; applies the fade pair. True when the fade ended."""
+        if self.state != self.CROSSFADING:
+            return False
+        self._ticked += 1
+        progress = min(1.0, self._ticked / self._steps)
+        self.progress = progress
+        cur_f, nxt_f = fade_pair(progress, self.seconds)
+        if self.current is not None:
+            self.current.set_volume(self.base_volume * cur_f)
+        if self.shadow is not None:
+            self.shadow.set_volume(self.base_volume * nxt_f)
+        if progress >= 1.0 and not self._promoted:
+            self._promoted = True   # exactly once, however many ticks land
+            self.state = self.DONE
+            if self.on_promote is not None:
+                self.on_promote()
+            return True
+        return False
+
+    def set_seconds(self, seconds: int) -> None:
+        self.seconds = max(0, int(seconds))
 
 
 class QueueEngine:
@@ -176,6 +453,7 @@ class PlaybackCore(QObject):
     queue_dry = pyqtSignal(object)                # last track before the queue ran dry
     stream_lost = pyqtSignal(object, int)         # (track, resume_ms) — mid-song death
     status = pyqtSignal(str)
+    preresolve_requested = pyqtSignal(object)     # Track — resolve the next stream while this one plays
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -211,6 +489,32 @@ class PlaybackCore(QObject):
         self._poll.setInterval(config.SEEK_POLL_MS)
         self._poll.timeout.connect(self._emit_position)
 
+        # --- crossfade (v1.0.0 groundwork; opt-in via config.CROSSFADE_ENABLED) ---
+        # With the flag off (the default) `_xf` stays None and every
+        # crossfade hook below is a one-line early return: zero behavior
+        # change. The controller exists at construction; the shadow
+        # PLAYER is built lazily, only when a pre-resolve lands.
+        self._crossfade_seconds = 0
+        self._xf: CrossfadeController | None = (
+            CrossfadeController(0, tick_ms=config.CROSSFADE_TICK_MS,
+                                on_promote=self._xf_promote)
+            if config.CROSSFADE_ENABLED else None
+        )
+        self._xf_timer: QTimer | None = None
+        self._xf_promoted_id: str | None = None   # absorbs the app's resolve echo
+        self._xf_preresolved: tuple[str, str] | None = None   # (current, next) asked for
+        self._xf_primed_loudness: float | None = None
+        self._xf_promoting = False   # re-entrancy brake around the promotion
+        self._xf_promoted_handle: MediaHandle | None = None   # keeps the promoted wrapper alive
+        # Tests swap this for a fake factory; production builds Qt twins.
+        self.shadow_factory: Callable[[], MediaHandle] | None = None
+        if self._xf is not None:
+            self._xf.adopt(_LiveBackendHandle(self))
+            # queue_changed can be emitted from outside the core (the app
+            # reorders/clears the engine directly) — self-connection keeps
+            # the pre-resolve re-armed no matter who moved the queue.
+            self.queue_changed.connect(self._xf_maybe_preresolve)
+
     # --- backend (lazy so headless/CI never touches multimedia) ---
 
     def _ensure_backend(self) -> bool:
@@ -223,15 +527,52 @@ class PlaybackCore(QObject):
             self._audio_out.setVolume(self._volume)
             self._player = QMediaPlayer(self)
             self._player.setAudioOutput(self._audio_out)
-            self._player.playbackStateChanged.connect(self._on_playback_state)
-            self._player.mediaStatusChanged.connect(self._on_media_status)
-            self._player.errorOccurred.connect(self._on_error)
-            self._player.durationChanged.connect(self.duration_changed.emit)
+            self._connect_backend()
             return True
         except Exception as exc:  # noqa: BLE001
             log.warning("audio backend unavailable: %s", exc)
             self.status.emit("Audio backend unavailable")
             return False
+
+    def _backend_signal_slots(self) -> tuple:
+        """The backend → core slot wiring, shared by connect/disconnect."""
+        return (
+            ("playbackStateChanged", self._on_playback_state),
+            ("mediaStatusChanged", self._on_media_status),
+            ("errorOccurred", self._on_error),
+            ("durationChanged", self.duration_changed.emit),
+        )
+
+    def _connect_backend(self) -> None:
+        """Wire the current backend's signals into the core slots.
+
+        Duck-typed on purpose: promotion re-runs this against whatever
+        object now fronts `self._player` (a real QMediaPlayer, or a test
+        fake that happens to expose Qt-style signals).
+        """
+        player = self._player
+        if player is None:
+            return
+        for name, slot in self._backend_signal_slots():
+            signal = getattr(player, name, None)
+            if signal is not None:
+                try:
+                    signal.connect(slot)
+                except (TypeError, RuntimeError):
+                    pass
+
+    def _disconnect_backend(self) -> None:
+        """Cut every backend → core signal (promotion tears the old primary down)."""
+        player = self._player
+        if player is None:
+            return
+        for name, slot in self._backend_signal_slots():
+            signal = getattr(player, name, None)
+            if signal is not None:
+                try:
+                    signal.disconnect(slot)
+                except (TypeError, RuntimeError):
+                    pass
 
     # --- playback ---
 
@@ -240,6 +581,8 @@ class PlaybackCore(QObject):
         self._error_streak = 0   # user-driven movement: fresh faith in the backend
         self._resume_pending = None
         self._resume_ms = 0
+        self._xf_promoted_id = None   # user movement: any pending echo is void
+        self._xf_cancel_user()
         self.engine.play_now(track)
         self.track_changed.emit(track)
         self.queue_changed.emit()
@@ -248,6 +591,8 @@ class PlaybackCore(QObject):
         self._error_streak = 0
         self._resume_pending = None
         self._resume_ms = 0
+        self._xf_promoted_id = None   # user movement: any pending echo is void
+        self._xf_cancel_user()
         first = self.engine.start_queue(tracks, start)
         self.queue_changed.emit()
         if first is not None:
@@ -288,6 +633,9 @@ class PlaybackCore(QObject):
             self._resume_ms = 0
             self.track_changed.emit(track)
             return
+        # Pausing or resuming mid-crossfade ends the fade honestly: the
+        # primed/rolling shadow is stopped, the old primary keeps the room.
+        self._xf_cancel_user()
         if not self._ensure_backend():
             return
         from PyQt6.QtMultimedia import QMediaPlayer
@@ -316,12 +664,15 @@ class PlaybackCore(QObject):
 
     def previous(self) -> None:
         self._error_streak = 0
+        self._xf_promoted_id = None   # user movement: any pending echo is void
+        self._xf_cancel_user()
         track = self.engine.go_back()
         self.queue_changed.emit()
         if track is not None:
             self.track_changed.emit(track)
 
     def stop(self) -> None:
+        self._xf_cancel_user()
         if self._player is not None:
             self._player.stop()
         self._poll.stop()
@@ -369,12 +720,248 @@ class PlaybackCore(QObject):
             self._player.setPlaybackRate(rate)
         self.rate_changed.emit(rate)
 
+    # --- crossfade + gapless pre-resolve (v1.0.0 groundwork) ---
+
+    @property
+    def crossfade_seconds(self) -> int:
+        """Crossfade length in whole seconds; 0 = off."""
+        return self._crossfade_seconds
+
+    def set_crossfade(self, seconds: int) -> None:
+        """Set the crossfade length (whole seconds, 0 = off).
+
+        Clamped to 0..CROSSFADE_MAX_MS//1000. Live: switching off drops
+        a primed shadow (nothing would ever use it); a ramp already in
+        flight is left to finish so the promotion lands cleanly.
+        """
+        limit = max(0, int(config.CROSSFADE_MAX_MS) // 1000)
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            seconds = 0
+        seconds = max(0, min(limit, seconds))
+        self._crossfade_seconds = seconds
+        if self._xf is not None:
+            self._xf.set_seconds(seconds)
+            if (seconds <= 0
+                    and self._xf.state == CrossfadeController.PRIMED):
+                self._xf.adopt(self._xf.current)   # drop the useless shadow
+
+    def _make_shadow(self) -> MediaHandle | None:
+        """Build a second player. Tests inject `shadow_factory` fakes."""
+        factory = self.shadow_factory
+        if factory is not None:
+            return factory()
+        try:
+            return QtMediaHandle(self)
+        except Exception as exc:  # noqa: BLE001 - no backend, no crossfade
+            log.warning("crossfade shadow unavailable: %s", exc)
+            return None
+
+    def _xf_maybe_preresolve(self) -> None:
+        """Ask the app layer to resolve the next stream while this one plays.
+
+        One request per (current, next) pair — cached; a queue change
+        re-arms automatically via the self-connected queue_changed.
+        Failures are silent by contract: the app drops them and the
+        normal EndOfMedia path resolves fresh as always.
+        """
+        ctl = self._xf
+        if ctl is None or ctl.seconds <= 0:
+            return
+        if ctl.state != CrossfadeController.IDLE:
+            return   # already primed (or fading) — nothing to pre-resolve
+        current = self.engine.current
+        nxt = self.engine.peek_next()
+        if current is None or nxt is None or not self._playing:
+            return
+        pair = (current.video_id, nxt.video_id)
+        if pair == self._xf_preresolved:
+            return   # asked for exactly this one already
+        self._xf_preresolved = pair
+        self.preresolve_requested.emit(nxt)
+
+    def prime_shadow(self, track: Track, url: str,
+                     loudness_db: float | None = None) -> None:
+        """A pre-resolve landed: load the next track onto the shadow player.
+
+        Called by the app layer when the preresolve_requested job came
+        back. Stale results — queue moved on, already primed, crossfade
+        off — are dropped silently; the normal EndOfMedia path always
+        works. The shadow is built lazily HERE, so with the flag on but
+        nothing queued, no second player ever exists.
+        """
+        ctl = self._xf
+        if ctl is None or not url:
+            return
+        if ctl.seconds <= 0 or ctl.state != CrossfadeController.IDLE:
+            return
+        nxt = self.engine.peek_next()
+        if nxt is None or nxt.video_id != track.video_id:
+            return   # the queue moved on while we were resolving
+        handle = self._make_shadow()
+        if handle is None:
+            return
+        try:
+            handle.load(url)
+        except Exception as exc:  # noqa: BLE001 - a dead pre-resolve is silent
+            log.debug("shadow load failed for %s: %s", track.video_id, exc)
+            return
+        handle.set_rate(self._rate)
+        handle.set_volume(0.0)
+        self._xf_primed_loudness = loudness_db
+        if not ctl.prime(handle, track):   # lost a race: give the handle back
+            handle.stop()
+
+    def _xf_cancel_user(self) -> None:
+        """User-driven movement ends crossfade business immediately.
+
+        Crossfade only ever engages on the NATURAL EndOfMedia path; a
+        skip, a queue jump or a pause while a shadow exists must not let
+        the primed track start playing out from under the user.
+        """
+        ctl = self._xf
+        if ctl is None:
+            return
+        self._xf_stop_timer()
+        if ctl.state in (CrossfadeController.PRIMED, CrossfadeController.CROSSFADING):
+            ctl.adopt(ctl.current)   # stop + drop the shadow
+
+    def _xf_stop_timer(self) -> None:
+        if self._xf_timer is not None:
+            self._xf_timer.stop()
+
+    def _xf_start_timer(self) -> None:
+        if self._xf is None:
+            return
+        if self._xf_timer is None:
+            self._xf_timer = QTimer(self)
+            self._xf_timer.setInterval(self._xf.tick_ms)
+            self._xf_timer.timeout.connect(self._xf_tick)
+        self._xf_timer.start()
+
+    def _xf_tick(self) -> None:
+        """One ramp step (the existing fade-timer pattern, per-handle)."""
+        if self._xf is None:
+            self._xf_stop_timer()
+            return
+        if self._xf.tick():    # finished — on_promote already ran inside
+            self._xf_stop_timer()
+
+    def _xf_engage(self) -> bool:
+        """Natural EndOfMedia + a healthy primed shadow → start the ramp.
+
+        Returns True when the crossfade took over (the caller must NOT
+        advance the queue — the promotion does that, exactly once). Any
+        doubt returns False and the legacy next() path runs exactly as
+        v0.6.3 left it. NEVER engages on errors, rejoin, skip, or manual
+        movement — those all pass through _xf_cancel_user or never reach
+        _on_end_of_media at all.
+        """
+        ctl = self._xf
+        if ctl is None or ctl.seconds <= 0:
+            return False
+        if ctl.state in (CrossfadeController.CROSSFADING,
+                         CrossfadeController.DONE):
+            # A second EndOfMedia relay while the ramp is running (or
+            # just finished): absorbed. The promotion advances the queue
+            # exactly once — this return is THE double-advance guard.
+            return True
+        if ctl.state != CrossfadeController.PRIMED:
+            return False
+        if ctl.shadow is None or ctl.shadow.error_count > 0:
+            ctl.adopt(ctl.current)   # a sick shadow is no better than none
+            return False
+        track = ctl.primed_track
+        nxt = self.engine.peek_next()
+        if track is None or nxt is None or nxt.video_id != track.video_id:
+            ctl.adopt(ctl.current)   # the queue moved on since priming
+            return False
+        if not ctl.end_of_media():
+            return False
+        self._xf_start_timer()
+        return True
+
+    def _xf_promote(self) -> None:
+        """Ramp finished: the shadow becomes THE primary — exactly once.
+
+        The promotion rebuilds the exact backend wiring _ensure_backend()
+        creates, then resets the stream-healing ledger for the new stream
+        (fresh rejoin budget, proof-of-audio gate, stall counters), so
+        the v0.6.3 machinery — stall watchdog, mid-song rejoin, bounded
+        error skips — watches the NEW primary from a clean slate. Then it
+        advances the queue ONCE: this call IS the EndOfMedia relay for
+        the crossed-over track. The app's resolve echo of that advance
+        is absorbed by the _xf_promoted_id guard in set_stream(), so the
+        freshly promoted stream is never reloaded mid-air.
+        """
+        ctl = self._xf
+        shadow, track = (ctl.shadow, ctl.primed_track) if ctl else (None, None)
+        if shadow is None or track is None or self._xf_promoting:
+            return
+        self._xf_promoting = True
+        try:
+            # 1) cut the old primary's signals, then silence and stop it.
+            #    setAudioOutput(None) first so the retired QAudioOutput can
+            #    be released without leaving the old player a dangling view.
+            self._disconnect_backend()
+            old_player = self._player
+            if old_player is not None:
+                try:
+                    old_player.setAudioOutput(None)
+                except (RuntimeError, AttributeError, TypeError):
+                    pass
+                try:
+                    old_player.stop()
+                except (RuntimeError, AttributeError):
+                    pass
+            # 2) adopt the shadow as the backend: a QtMediaHandle hands
+            #    over its inner QMediaPlayer/QAudioOutput pair; any other
+            #    MediaHandle (test fakes) stands in as the backend
+            #    directly — the core duck-types self._player either way.
+            self._player = getattr(shadow, "player", shadow)
+            audio = getattr(shadow, "audio", None)
+            if audio is not None:
+                self._audio_out = audio
+            self._xf_promoted_handle = shadow   # own the wrapper: it holds the audio
+            self._connect_backend()
+            # 3) clean healing ledger for the new stream — the same reset
+            #    set_stream() performs, so nothing carries over.
+            self._recovered_id = track.video_id
+            self._retries = 0
+            self._stream_played = False
+            self._stream_anchor_ms = 0
+            self._stall_polls = 0
+            self._last_pos_ms = 0
+            self._playing = True   # the shadow is audibly rolling
+            self._poll.start()
+            self.state_changed.emit(True)
+            self.apply_normalization(self._xf_primed_loudness)
+            duration = max(0, int(shadow.duration_ms))
+            if duration:
+                self.duration_changed.emit(duration)
+            # 4) exactly ONE queue advance — the promotion is the relay.
+            self.next()
+            self._xf_promoted_id = track.video_id   # absorb the resolve echo
+            # 5) hand the controller a fresh round (shadow reference is
+            #    consumed — the promoted handle now lives as the backend).
+            ctl.shadow = None
+            ctl.primed_track = None
+            ctl.state = CrossfadeController.IDLE
+            ctl.progress = 0.0
+            ctl.current = _LiveBackendHandle(self)
+            self._xf_maybe_preresolve()
+        finally:
+            self._xf_promoting = False
+
     # --- volume / seek ---
 
     def set_volume(self, value: float) -> None:
         self._volume = max(0.0, min(1.0, float(value)))
         if self._audio_out is not None:
             self._audio_out.setVolume(self._volume)
+        if self._xf is not None:
+            self._xf.base_volume = self._volume   # keep the ramp scaled to master
 
     @property
     def volume(self) -> float:
@@ -486,6 +1073,17 @@ class PlaybackCore(QObject):
             return
         if self.engine.current is not None and self.engine.current.video_id != track.video_id:
             return  # user moved on while we were resolving
+        if (self._xf_promoted_id == track.video_id
+                and self.engine.current is not None
+                and self.engine.current.video_id == track.video_id):
+            # A crossfade promotion already started this very track on
+            # the new primary; this is the app's resolve echo of that
+            # advance. Refresh gain + rate, but never touch the source —
+            # reloading it would restart the song mid-fade.
+            self._xf_promoted_id = None
+            self.apply_normalization(loudness_db)
+            self._player.setPlaybackRate(self._rate)
+            return
         if self._recovered_id != track.video_id:
             self._recovered_id = track.video_id
             self._retries = 0  # a fresh track gets a fresh budget
@@ -506,6 +1104,8 @@ class PlaybackCore(QObject):
         self._stream_anchor_ms = rejoin
         self._stall_polls = 0
         self.state_changed.emit(True)
+        self._xf_rearm()
+        self._xf_maybe_preresolve()
 
     def _try_rejoin(self, track: Track, reason: str) -> bool:
         """Ask for a freshly resolved URL and rejoin this very song.
@@ -554,13 +1154,47 @@ class PlaybackCore(QObject):
         of advancing. This restores it (repeat modes and autoplay are
         already handled by next() and the queue_dry -> radio refill
         chain in the app layer).
+
+        With crossfade armed and a healthy primed shadow, the fade takes
+        over instead: the queue advance moves to the END of the ramp
+        (the promotion), exactly once.
         """
         log.debug("track finished — rolling into the next one")
         self._error_streak = 0   # a natural finish proves the pipeline is healthy
+        if self._xf_engage():
+            return
         self.next()
+
+    def _xf_rearm(self) -> None:
+        """A fresh stream just took the primary: settle crossfade state.
+
+        A primed shadow that is STILL the queue's next track survives
+        (the pre-resolve stays valid); anything else — stale prime,
+        ramp-in-flight — is cancelled so the new track starts clean.
+        """
+        ctl = self._xf
+        if ctl is None:
+            return
+        self._xf_stop_timer()
+        if ctl.state == CrossfadeController.IDLE:
+            return
+        nxt = self.engine.peek_next()
+        if (ctl.state == CrossfadeController.PRIMED
+                and ctl.primed_track is not None
+                and nxt is not None
+                and nxt.video_id == ctl.primed_track.video_id):
+            return   # still the right next track — keep the primed shadow
+        ctl.adopt(ctl.current)
 
     def _on_error(self, err, err_str: str) -> None:
         log.warning("player error: %s", err_str)
+        ctl = self._xf
+        if ctl is not None and ctl.state == CrossfadeController.CROSSFADING:
+            # An error from the outgoing stream mid-ramp (it is already
+            # finished by definition — there is nothing to heal): absorb
+            # it. The promotion moments later rebuilds the whole healing
+            # machinery around the new primary.
+            return
         self._playing = False   # the backend just said otherwise; believe it
         self.state_changed.emit(False)
         current = self.engine.current
@@ -600,6 +1234,18 @@ class PlaybackCore(QObject):
 
     def _emit_position(self) -> None:
         if self._player is None:
+            return
+        ctl = self._xf
+        if ctl is not None and ctl.state == CrossfadeController.CROSSFADING:
+            # Mid-fade the outgoing stream is finished by definition, so
+            # the stall watchdog has nothing to heal — stand it down and
+            # report the position of the track that is actually audible.
+            try:
+                pos = (ctl.shadow.position_ms
+                       if ctl.shadow is not None else self._player.position())
+            except (RuntimeError, AttributeError):
+                pos = 0
+            self.position_changed.emit(int(pos))
             return
         pos = self._player.position()
         if self._playing and pos == self._last_pos_ms:

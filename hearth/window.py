@@ -1154,6 +1154,7 @@ class NowView(QWidget):
     radio_requested = pyqtSignal()
     lyrics_seek_requested = pyqtSignal(int)   # ms — click a lyric line, go there
     lyrics_font_changed = pyqtSignal(str, str)  # size key (S/M/L), family
+    crossfade_changed = pyqtSignal(int)         # seconds (0 = off)
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -1244,6 +1245,28 @@ class NowView(QWidget):
             cap_row.addWidget(chip)
         self._sync_size_chips()
         right.addLayout(cap_row)
+        # --- crossfade row (v1.0.0 groundwork, opt-in via config flag) ---
+        # Built only when CROSSFADE_ENABLED: with the flag off (default)
+        # the slider never exists and nothing else in the view changes.
+        self._xf_slider = None
+        self._xf_label = None
+        if config.CROSSFADE_ENABLED:
+            xf_row = QHBoxLayout()
+            xf_row.setSpacing(8)
+            xf_cap = QLabel("Crossfade")
+            xf_cap.setProperty("dim", True)
+            self._xf_label = QLabel("off")
+            self._xf_label.setProperty("dim", True)
+            self._xf_label.setFixedWidth(28)
+            self._xf_slider = QSlider(Qt.Orientation.Horizontal)
+            self._xf_slider.setRange(0, max(0, config.CROSSFADE_MAX_MS // 1000))
+            self._xf_slider.setValue(config.CROSSFADE_DEFAULT_SECONDS)
+            self._xf_slider.setToolTip("Blend the end of one song into the next")
+            self._xf_slider.valueChanged.connect(self._on_crossfade_moved)
+            xf_row.addWidget(xf_cap)
+            xf_row.addWidget(self._xf_slider, 1)
+            xf_row.addWidget(self._xf_label)
+            right.addLayout(xf_row)
         right.addWidget(self._lyrics, 1)
 
         body.addLayout(left, 1)
@@ -1343,6 +1366,34 @@ class NowView(QWidget):
     def _sync_size_chips(self) -> None:
         for key, chip in self._size_chips.items():
             chip.setChecked(key == self._size_key)
+
+    # --- crossfade row (v1.0.0 groundwork) ---
+
+    def _on_crossfade_moved(self, value: int) -> None:
+        self._sync_crossfade_label(value)
+        self.crossfade_changed.emit(int(value))
+
+    def _sync_crossfade_label(self, value: int) -> None:
+        if self._xf_label is not None:
+            self._xf_label.setText(f"{int(value)}s" if value else "off")
+
+    def set_crossfade(self, seconds: int) -> None:
+        """Restore the persisted length silently (the app already knows)."""
+        if self._xf_slider is None:
+            return
+        try:
+            seconds = int(seconds)
+        except (TypeError, ValueError):
+            seconds = 0
+        seconds = max(0, min(self._xf_slider.maximum(), seconds))
+        self._xf_slider.blockSignals(True)
+        self._xf_slider.setValue(seconds)
+        self._xf_slider.blockSignals(False)
+        self._sync_crossfade_label(seconds)
+
+    @property
+    def crossfade_seconds(self) -> int:
+        return 0 if self._xf_slider is None else int(self._xf_slider.value())
 
     def _emit_lyrics_font(self) -> None:
         """Apply locally, then tell the app (it persists + spreads the rest)."""
@@ -3166,6 +3217,10 @@ class MainWindow(QMainWindow):
         """Apply + remember the lyrics settings across every lyric surface."""
         self.now_view.set_lyrics_settings(size_key, family)
         self.theater_view.apply_lyrics_font(font)
+
+    def set_crossfade(self, seconds: int) -> None:
+        """Restore the persisted crossfade length on the Now Playing row."""
+        self.now_view.set_crossfade(seconds)
 
     def set_volume(self, value: float) -> None:
         self.player_bar.set_volume(value)
