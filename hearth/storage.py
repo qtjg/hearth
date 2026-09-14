@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
 import time
+from datetime import datetime
 from pathlib import Path
 
-from .models import Track
+from .config import (
+    HISTORY_PAGE_SIZE,
+    ON_REPEAT_DECAY_DAYS,
+    ON_REPEAT_LIMIT,
+    STATS_TOP_LIMIT,
+)
+from .models import Track, parse_duration
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS favorites (
@@ -33,7 +42,23 @@ CREATE TABLE IF NOT EXISTS playlist_tracks (
     payload     TEXT NOT NULL,
     PRIMARY KEY (playlist_id, position)
 );
+CREATE TABLE IF NOT EXISTS queue_snapshot (
+    id          INTEGER PRIMARY KEY CHECK (id = 1),
+    video_ids   TEXT NOT NULL,
+    idx         INTEGER NOT NULL DEFAULT 0,
+    position_ms INTEGER NOT NULL DEFAULT 0,
+    updated_at  REAL NOT NULL DEFAULT (unixepoch('now'))
+);
+CREATE TABLE IF NOT EXISTS track_prefs (
+    video_id TEXT NOT NULL,
+    key      TEXT NOT NULL,
+    value    REAL NOT NULL,
+    PRIMARY KEY (video_id, key)
+);
 """
+
+# Bare URLs in an .m3u carry the video id in a v= query parameter.
+_VIDEO_ID_RE = re.compile(r"[?&]v=([A-Za-z0-9_-]+)")
 
 
 class HearthStore:
@@ -119,35 +144,46 @@ class HearthStore:
     # --- memory & rituals (v0.7.0) ---
 
     def on_repeat(
-        self, limit: int = 25, half_life_days: float = 7.0
+        self, limit: int = ON_REPEAT_LIMIT, decay_days: float = ON_REPEAT_DECAY_DAYS
     ) -> list[Track]:
         """The decayed most-played list: last week beats last year.
 
-        Every play scores `0.5 ** (age / half_life)` — a track played all
-        week outranks one you binged last spring. Ties break by video_id
-        so the shelf is stable across refreshes.
+        Every play scores `0.5 ** (age_days / decay_days)` — a track played
+        all week outranks one you binged last spring. Deduped by video_id
+        (newest payload wins); ties break by total plays, then title.
         """
-        rows = self._db.execute(
-            "SELECT video_id, payload, played_at FROM history"
-        ).fetchall()
-        if not rows:
-            return []
-        half_life = max(0.5, float(half_life_days)) * 86400.0
+        scores = self.on_repeat_scores(limit=limit, decay_days=decay_days)
+        return [track for track, _score in scores]
+
+    def on_repeat_scores(
+        self, limit: int = ON_REPEAT_LIMIT, decay_days: float = ON_REPEAT_DECAY_DAYS
+    ) -> list[tuple[Track, float]]:
+        """(track, score) pairs behind on_repeat() — the math, exposed."""
+        decay = decay_days if decay_days > 0 else 1.0
         now = time.time()
+        rows = self._db.execute(
+            "SELECT video_id, payload, played_at FROM history ORDER BY id DESC"
+        ).fetchall()
         scores: dict[str, float] = {}
-        payloads: dict[str, str] = {}
+        plays: dict[str, int] = {}
+        newest: dict[str, str] = {}
         for video_id, payload, played_at in rows:
-            age = max(0.0, now - float(played_at))
-            scores[video_id] = scores.get(video_id, 0.0) + 0.5 ** (age / half_life)
-            payloads[video_id] = payload
-        ranked = sorted(scores, key=lambda vid: (-scores[vid], vid))
-        out: list[Track] = []
-        for video_id in ranked[: max(0, int(limit))]:
+            if video_id not in newest:
+                newest[video_id] = payload
+            age_days = max(0.0, (now - float(played_at)) / 86400.0)
+            scores[video_id] = scores.get(video_id, 0.0) + 0.5 ** (age_days / decay)
+            plays[video_id] = plays.get(video_id, 0) + 1
+        ranked: list[tuple[Track, float]] = []
+        for video_id, score in scores.items():
             try:
-                out.append(Track.from_json(payloads[video_id]))
+                track = Track.from_json(newest[video_id])
             except (TypeError, ValueError):
-                continue
-        return out
+                continue  # corrupt row — not worth dying over
+            ranked.append((track, score))
+        ranked.sort(
+            key=lambda pair: (-pair[1], -plays[pair[0].video_id], str(pair[0].title).lower())
+        )
+        return ranked[: max(int(limit), 0)]
 
     def history_page(
         self, days: int | None = None, limit: int = 2000
@@ -202,6 +238,138 @@ class HearthStore:
             "top_artist_plays": artists.get(top_artist, 0),
             "days_listened": len(days),
         }
+
+    # --- memory: day jumps, stats, queue, prefs (v0.7.0 storage core) ---
+
+    def history_days(self) -> list[tuple[str, int]]:
+        """Distinct listening days (YYYY-MM-DD) with play counts, newest first."""
+        rows = self._db.execute(
+            "SELECT date(played_at, 'unixepoch', 'localtime') AS day, COUNT(*) "
+            "FROM history GROUP BY day ORDER BY day DESC"
+        ).fetchall()
+        return [(str(day), int(count)) for day, count in rows]
+
+    def history_on(self, day: str, limit: int = HISTORY_PAGE_SIZE) -> list[Track]:
+        """Plays from one calendar day, newest first — the day-jump view."""
+        rows = self._db.execute(
+            "SELECT payload FROM history "
+            "WHERE date(played_at, 'unixepoch', 'localtime') = ? "
+            "ORDER BY id DESC LIMIT ?",
+            (day, limit),
+        ).fetchall()
+        return [Track.from_json(payload) for (payload,) in rows]
+
+    def history_slice(
+        self, page: int = 0, page_size: int = HISTORY_PAGE_SIZE
+    ) -> tuple[list[Track], bool]:
+        """One flat slice of history, newest first, plus whether more remain.
+
+        (Named `history_slice` because history_page() already groups by day.)
+        """
+        size = max(page_size, 0)
+        offset = max(page, 0) * size
+        rows = self._db.execute(
+            "SELECT payload FROM history ORDER BY id DESC LIMIT ? OFFSET ?",
+            (size + 1, offset),
+        ).fetchall()
+        has_more = len(rows) > size
+        return [Track.from_json(payload) for (payload,) in rows[:size]], has_more
+
+    def stats_summary(self, top: int = STATS_TOP_LIMIT) -> dict:
+        """Everything the memory dashboard needs, degraded gracefully when thin."""
+        (total_plays,) = self._db.execute("SELECT COUNT(*) FROM history").fetchone()
+        (unique_tracks,) = self._db.execute(
+            "SELECT COUNT(DISTINCT video_id) FROM history"
+        ).fetchone()
+        (days_listened,) = self._db.execute(
+            "SELECT COUNT(DISTINCT date(played_at, 'unixepoch', 'localtime')) FROM history"
+        ).fetchone()
+        row = self._db.execute("SELECT MIN(played_at) FROM history").fetchone()
+        first_play = (
+            datetime.fromtimestamp(float(row[0])).isoformat(timespec="seconds")
+            if row and row[0] is not None
+            else None
+        )
+        artist_counts: dict[str, int] = {}
+        total_seconds = 0.0
+        per_track = self._db.execute(
+            "SELECT payload, COUNT(*) FROM history GROUP BY video_id"
+        ).fetchall()
+        for payload, plays in per_track:
+            try:
+                data = json.loads(payload)
+            except ValueError:
+                continue
+            if not isinstance(data, dict):
+                continue
+            artist = str(data.get("artist") or "").strip()
+            if artist:
+                artist_counts[artist] = artist_counts.get(artist, 0) + plays
+            seconds = data.get("duration_sec") or 0
+            if not isinstance(seconds, (int, float)) or seconds <= 0:
+                seconds = parse_duration(str(data.get("duration") or ""))
+            total_seconds += max(0.0, float(seconds)) * plays
+        top_artists = sorted(artist_counts.items(), key=lambda item: (-item[1], item[0]))
+        return {
+            "total_plays": int(total_plays),
+            "unique_tracks": int(unique_tracks),
+            "est_minutes": int(total_seconds // 60),
+            "days_listened": int(days_listened),
+            "first_play": first_play,
+            "top_tracks": self.top_tracks(max(top, 0)),
+            "top_artists": top_artists[: max(top, 0)],
+        }
+
+    def save_queue(self, video_ids: list[str], index: int, position_ms: int) -> None:
+        """Idempotent single-row snapshot — cheap enough to call on every tick."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO queue_snapshot (id, video_ids, idx, position_ms) "
+            "VALUES (1, ?, ?, ?)",
+            (json.dumps(list(video_ids)), int(index), int(position_ms)),
+        )
+        self._db.commit()
+
+    def load_queue(self) -> tuple[list[str], int, int] | None:
+        """The saved queue, or None when nothing worth restoring is kept."""
+        row = self._db.execute(
+            "SELECT video_ids, idx, position_ms FROM queue_snapshot WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            video_ids = json.loads(row[0])
+        except ValueError:
+            return None
+        if not isinstance(video_ids, list):
+            return None
+        return [str(v) for v in video_ids], int(row[1]), int(row[2])
+
+    def clear_queue(self) -> None:
+        self._db.execute("DELETE FROM queue_snapshot")
+        self._db.commit()
+
+    def set_track_pref(self, video_id: str, key: str, value: float) -> None:
+        """Remember a per-track dial (speed, volume) — upsert, never complains."""
+        self._db.execute(
+            "INSERT OR REPLACE INTO track_prefs (video_id, key, value) VALUES (?, ?, ?)",
+            (video_id, key, float(value)),
+        )
+        self._db.commit()
+
+    def track_pref(
+        self, video_id: str, key: str, default: float | None = None
+    ) -> float | None:
+        row = self._db.execute(
+            "SELECT value FROM track_prefs WHERE video_id = ? AND key = ?",
+            (video_id, key),
+        ).fetchone()
+        return float(row[0]) if row else default
+
+    def track_prefs_all(self, video_id: str) -> dict[str, float]:
+        rows = self._db.execute(
+            "SELECT key, value FROM track_prefs WHERE video_id = ?", (video_id,)
+        ).fetchall()
+        return {key: float(value) for key, value in rows}
 
     # --- playlists ---
 
@@ -347,6 +515,113 @@ class HearthStore:
                 if track is not None and self.add_to_playlist(pid, track):
                     tracks_added += 1
         return playlists_added, tracks_added
+
+    # --- playlist files: import / export (never-raises) ---
+
+    def export_playlists(self, path: str | Path) -> bool:
+        """Playlists only, same shapes as export_library(). False on write failure."""
+        data = self.export_library()
+        data.pop("favorites", None)
+        try:
+            Path(path).write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            return False
+        return True
+
+    def import_playlists(self, path: str | Path, merge: bool = True) -> int:
+        """Import playlists from an export_playlists()/export_library() file.
+
+        merge=True folds tracks into same-named playlists; merge=False always
+        creates new ones. Returns how many playlists were imported, 0 on any
+        failure. Corrupt entries are skipped individually.
+        """
+        try:
+            data = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return 0
+        if not isinstance(data, dict) or not isinstance(data.get("playlists"), list):
+            return 0
+        imported = 0
+        for entry in data["playlists"]:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name") or "").strip()
+            if not name:
+                continue
+            pid = self._playlist_for_import(name, merge=merge)
+            if pid is None:
+                pid = self.create_playlist(name)
+            for track_data in entry.get("tracks") or []:
+                track = self._track_from(track_data)
+                if track is not None:
+                    self.add_to_playlist(pid, track)
+            imported += 1
+        return imported
+
+    def export_m3u(self, playlist_id: int, path: str | Path) -> bool:
+        """Standard #EXTM3U with YouTube Music URLs. False on any failure."""
+        if self.playlist_name(playlist_id) is None:
+            return False
+        lines = ["#EXTM3U"]
+        for t in self.playlist_tracks(playlist_id):
+            seconds = t.duration_sec or parse_duration(t.duration)
+            lines.append(f"#EXTINF:{seconds},{t.artist} - {t.title}")
+            lines.append(f"https://music.youtube.com/watch?v={t.video_id}")
+        try:
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError:
+            return False
+        return True
+
+    def import_m3u(self, path: str | Path, name: str) -> int:
+        """Import an .m3u file as a new playlist. Returns tracks added.
+
+        #EXTINF labels are read as 'Artist - Title'; entries without one fall
+        back to the video id as the title. 0 on any failure.
+        """
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except (OSError, ValueError):
+            return 0
+        name = name.strip()
+        if not name:
+            return 0
+        pid = self.create_playlist(name)
+        added = 0
+        seconds = 0
+        label = ""
+        for line in text.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("#EXTINF:"):
+                raw, _sep, label = line[len("#EXTINF:"):].partition(",")
+                try:
+                    seconds = int(float(raw))
+                except (ValueError, OverflowError):
+                    seconds = 0
+                continue
+            if line.startswith("#"):
+                continue
+            match = _VIDEO_ID_RE.search(line)
+            if match is None:
+                continue
+            artist, sep, title = label.partition(" - ")
+            if not sep:
+                artist, title = "", label
+            track = Track(
+                video_id=match.group(1),
+                title=title.strip() or match.group(1),
+                artist=artist.strip(),
+                duration_sec=max(0, seconds),
+            )
+            if self.add_to_playlist(pid, track):
+                added += 1
+            seconds = 0
+            label = ""
+        return added
 
     def _playlist_for_import(self, name: str, merge: bool) -> int | None:
         """merge=True reuses a same-named playlist; None = create a new one."""
