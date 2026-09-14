@@ -7,8 +7,8 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=72&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Gradients+%C2%B7+glows+%C2%B7+3D+covers+%C2%B7+crossfades;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-254%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.6.2-ff7a18?style=flat-square)
+![tests](https://img.shields.io/badge/tests-268%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.6.3-ff7a18?style=flat-square)
 ![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
@@ -484,7 +484,7 @@ hearth/
 │   ├── ytm_resilience.py → junk-card-tolerant YT Music parser layer (Discover)
 │   └── utils.py        → small zero-dependency helpers
 ├── docs/assets/        → animated 3D SVG artwork, banner art & screenshots used by this README
-├── tests/              → 254 headless tests (offscreen Qt platform)
+├── tests/              → 268 headless tests (offscreen Qt platform)
 ├── packaging/arch/     → PKGBUILD for a native Arch package
 ├── install.sh / .bat   → one-command venv setup per OS
 ├── launch.sh / .bat    → silent desktop launchers
@@ -495,7 +495,7 @@ hearth/
 
 ## 🧪 Testing
 
-254 tests cover models, palettes, playlists, share codecs, storage, retry
+268 tests cover models, palettes, playlists, share codecs, storage, retry
 backoff, format picking, queue semantics, radio + autoplay refill, lyrics
 caching, LRC parsing, the LRCLIB fallback ladder, artist-page mapping
 (catalogue, jobs, view, app drill-down), hotkey conflicts, the genre
@@ -516,7 +516,8 @@ not just claimed.
 ## 🗺️ Roadmap
 
 The living plan — waves, acceptance criteria, and the wish pool — lives in
-**[ROADMAP.md](ROADMAP.md)**. Glass & Motion just shipped in v0.6.2; the
+**[ROADMAP.md](ROADMAP.md)**. v0.6.3 just taught Hearth to keep the fire
+burning — finished tracks roll on, dead streams rejoin mid-song; the
 headline of what burns next:
 
 - 🔥 **v0.7.0 — Memory & Rituals**: listen history shelves, "On Repeat"
