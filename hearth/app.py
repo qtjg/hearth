@@ -24,6 +24,7 @@ from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QSystemTrayIcon
 
 from . import config, plugins, theme, world, ytm_resilience
+from .ambient import AmbientChannel
 from .catalog import Catalog
 from .command_palette import CommandAction, CommandPalette
 from .diagnostics import gather_report
@@ -173,6 +174,27 @@ def _coerce_track(entry) -> Track | None:
     return track if track.video_id and track.title else None
 
 
+def _i18n_label(key: str, fallback: str) -> str:
+    """A tray label through the i18n scaffold (guarded — never fatal).
+
+    The scaffold is opt-in by config.I18N_LANG: while it stays "en",
+    the hand-written literals win (same words, zero lookups). When a
+    key is missing from every table, the readable fallback wins too —
+    the tray never shows a raw msg_key. Any surprise in the lookup
+    path costs a label, never the tray.
+    """
+    try:
+        lang = getattr(config, "I18N_LANG", "en")
+        if lang and lang != "en":
+            from .i18n import tr
+
+            translated = tr(key, lang)
+            return fallback if translated == key else translated
+    except Exception:  # noqa: BLE001 - a label must never kill the tray
+        pass
+    return fallback
+
+
 class AlarmController(QObject):
     """Wake-up alarm: a one-shot deadline that fades the fire back up.
 
@@ -302,6 +324,9 @@ class Hearth:
         self._alarm_fade: QTimer | None = None
         self._alarm_target = 0.8
         self._alarm_step = 0
+        # ambient mixer: a second, quieter fire beside the music — its
+        # own sink, its own level, the player path untouched
+        self.ambient = AmbientChannel(parent=self.qapp)
         self.tray: HearthTray | None = None
         # plugin shelf sources: name -> callable returning Track-shaped dicts
         # (resolved on the job pool; the home "🔌 Plugins" shelf renders them)
@@ -426,9 +451,9 @@ class Hearth:
             log.info("No system tray on this desktop — skipping tray icon")
             return
         actions = {
-            "play": self._make_action("Play / Pause", self.core.toggle),
-            "next": self._make_action("Next", self.core.next),
-            "prev": self._make_action("Previous", self.core.previous),
+            "play": self._make_action(_i18n_label("play_pause", "Play / Pause"), self.core.toggle),
+            "next": self._make_action(_i18n_label("next", "Next"), self.core.next),
+            "prev": self._make_action(_i18n_label("previous", "Previous"), self.core.previous),
             "show": self._make_action("Show Hearth", self._summon),
             "diag": self._make_action("🩺 Diagnostics", self._show_diagnostics),
         }
@@ -456,7 +481,21 @@ class Hearth:
                 lambda _checked, m=minutes: self._arm_alarm(m)
             )
             alarm_menu.addAction(act)
-        self.tray = HearthTray(actions, menus=[sleep_menu, alarm_menu], parent=self.qapp)
+        # ambient: one soundscape at a time, each with its own level dial
+        ambient_menu = QMenu("🌫️ Ambient")
+        ambient_menu.addAction(
+            self._make_action("Off", lambda: self._set_ambient(None, 0.0))
+        )
+        for kind_label, kind in (("🏕 Campfire", "campfire"), ("🌧 Rain", "rain")):
+            sub = QMenu(kind_label, ambient_menu)
+            for frac in config.AMBIENT_LEVELS:
+                act = QAction(f"{int(round(frac * 100))}%", sub)
+                act.triggered.connect(
+                    lambda _checked, k=kind, f=frac: self._set_ambient(k, f)
+                )
+                sub.addAction(act)
+            ambient_menu.addMenu(sub)
+        self.tray = HearthTray(actions, menus=[sleep_menu, alarm_menu, ambient_menu], parent=self.qapp)
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
@@ -1275,6 +1314,33 @@ class Hearth:
         self.core.set_volume(
             self._alarm_target * self._alarm_step / config.ALARM_FADE_STEPS)
 
+    # --- ambient mixer (v0.7.0) ---
+
+    def _set_ambient(self, kind: str | None, level: float) -> None:
+        """One soundscape at a time; level-only tweaks keep it playing.
+
+        Never raises: on a machine with no audio device (or a dead
+        sink) the start is a silent no-op and the status note says so.
+        """
+        if kind is None:
+            self.ambient.stop()
+            self.surface.set_status("Ambient: off")
+            return
+        try:
+            level = max(0.0, min(1.0, float(level)))
+        except (TypeError, ValueError):
+            level = config.AMBIENT_DEFAULT_LEVEL
+        label = f"{int(round(level * 100))}%"
+        if self.ambient.active and self.ambient.kind == kind:
+            self.ambient.set_level(level)
+        else:
+            if not self.ambient.start(kind):
+                self.surface.set_status("Ambient unavailable — no audio device")
+                return
+            self.ambient.set_level(level)
+        name = "🏕 Campfire" if kind == "campfire" else "🌧 Rain"
+        self.surface.set_status(f"Ambient: {name} at {label}")
+
     def _set_sleep(self, minutes: int) -> None:
         self.core.set_sleep_timer(minutes or None)
         self.window.player_bar.set_sleep_label(minutes or None)
@@ -1704,6 +1770,7 @@ class Hearth:
     def shutdown(self) -> None:
         # Let in-flight jobs land while their recipients are still alive.
         QThreadPool.globalInstance().waitForDone(5000)
+        self.ambient.stop()   # release the ambience sink fully on the way out
         self.mpris.stop()
         self._persist()
         self.store.close()

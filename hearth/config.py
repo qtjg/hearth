@@ -146,6 +146,15 @@ LOCAL_AUDIO_SUFFIXES = (".mp3", ".flac", ".ogg", ".m4a", ".wav")
 LOCAL_SCAN_CAP = 5000            # max audio files per scan
 LOCAL_SCAN_TIMEOUT_S = 60.0      # soft wall-clock budget for a scan walk
 
+# --- v0.7.0: ambient mixer + i18n + last.fm groundwork (31-c5c) ---
+AMBIENT_DEFAULT_LEVEL = 0.35  # campfire/rain bed loudness (0..1)
+AMBIENT_LEVELS = (0.25, 0.35, 0.5, 0.7)  # tray level submenu choices
+AMBIENT_TICK_MS = 100         # ambient pull cadence (~2205 frames per tick)
+I18N_LANG = "en"              # tray label scaffold: "en", partial "hi"/"es"
+LASTFM_API_KEY = ""           # user keys; empty = the scrobble bridge sleeps
+LASTFM_SECRET = ""
+LASTFM_ENABLED = False        # opt-in; not wired into playback (roadmap guardrail)
+
 VERSION = "0.6.3"
 
 REPEAT_OFF = "off"
