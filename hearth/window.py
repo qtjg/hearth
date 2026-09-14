@@ -9,11 +9,24 @@ active Palette — no assets, no third-party marks.
 from __future__ import annotations
 
 import json
+import math
+import random
+import time
 from dataclasses import replace
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QImage, QKeySequence, QPixmap, QShortcut
+from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import (
+    QBrush,
+    QColor,
+    QFont,
+    QImage,
+    QKeySequence,
+    QLinearGradient,
+    QPainter,
+    QPixmap,
+    QShortcut,
+)
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -1507,6 +1520,171 @@ class TheaterView(QWidget):
         return self._track
 
 
+# ----------------------------------------------------------------- visualizer
+
+class VisualizerModel:
+    """Pure headless model behind the player-bar mini-visualizer.
+
+    No Qt, no clock: the widget feeds `tick(dt)` every frame and paints
+    whatever comes back. Bars ease toward smooth pseudo-random targets
+    while playing (each bar drifts on its own phase), settle into a low
+    resting wave when paused, and fall to a flat baseline when stopped.
+    Every amplitude stays in [0, 1] and moves at most MAX_STEP_PER_SEC
+    * dt per tick, so nothing on screen ever jumps or flickers. A seed
+    makes the whole dance reproducible in tests.
+    """
+
+    MAX_STEP_PER_SEC = 2.2   # easing cap: a full swing takes ~0.45 s
+
+    STATES = ("playing", "paused", "stopped")
+
+    def __init__(self, bars: int | None = None, seed: int | None = None):
+        self._n = max(1, int(bars or config.VISUALIZER_BARS))
+        self._rng = random.Random(seed)
+        self._state = "stopped"
+        self._t = 0.0
+        self._amps = [0.0] * self._n
+        self._phase = [self._rng.uniform(0.0, 2.0 * math.pi)
+                       for _ in range(self._n)]
+        self._drift = [self._rng.uniform(0.6, 2.4)
+                       for _ in range(self._n)]
+
+    @property
+    def bars(self) -> int:
+        return self._n
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    @property
+    def amplitudes(self) -> list[float]:
+        """The live heights (read-only view — paint straight from it)."""
+        return self._amps
+
+    def set_state(self, state: str) -> None:
+        """'playing' | 'paused' | 'stopped' (anything else is ignored)."""
+        if state in self.STATES:
+            self._state = state
+
+    def tick(self, dt: float) -> list[float]:
+        """Advance one frame; returns a fresh list of heights in [0, 1]."""
+        dt = min(max(float(dt), 0.0), 0.25)   # tab-switch spikes stay tame
+        self._t += dt
+        cap = self.MAX_STEP_PER_SEC * dt
+        for i in range(self._n):
+            self._phase[i] = (self._phase[i] + self._drift[i] * dt) % (2.0 * math.pi)
+            target = self._target(i)
+            delta = target - self._amps[i]
+            if delta > cap:
+                delta = cap
+            elif delta < -cap:
+                delta = -cap
+            self._amps[i] += delta
+        return list(self._amps)
+
+    def _target(self, i: int) -> float:
+        """Where bar `i` wants to be this frame, per the current state."""
+        if self._state == "playing":
+            return 0.32 + 0.53 * (0.5 + 0.5 * math.sin(self._phase[i]))
+        if self._state == "paused":
+            wave = 0.5 + 0.5 * math.sin(self._t * 1.1 + self._phase[i] * 0.35)
+            return 0.05 + 0.07 * wave   # the fire idles low, never out
+        return 0.0
+
+
+class MiniVisualizer(QWidget):
+    """The player-bar equalizer: rounded accent bars breathing with the song.
+
+    One widget, one paintEvent, one timer. Geometry and the accent
+    gradient are cached on resize/palette changes, and each frame only
+    re-heights the cached rects in place — nothing is allocated per
+    frame. The actual motion lives in the pure VisualizerModel.
+    """
+
+    def __init__(self, palette: Palette, bars: int | None = None,
+                 model: VisualizerModel | None = None, parent=None):
+        super().__init__(parent)
+        self._palette = palette
+        self._model = model or VisualizerModel(bars=bars)
+        self._bars: list[QRectF] = []      # full-height templates, re-heighted per frame
+        self._floor = 0.0                  # bottom y for every bar
+        self._full_h = 0.0
+        self._brush = QBrush()
+        self.setFixedSize(124, 40)
+        self._timer = QTimer(self)
+        self._timer.setInterval(config.VISUALIZER_TICK_MS)
+        self._timer.timeout.connect(self._on_tick)
+        self._last = 0.0
+        self._rebuild()
+
+    # --- state in ---
+
+    def set_state(self, state: str) -> None:
+        """'playing' | 'paused' | 'stopped' — forwarded to the model."""
+        self._model.set_state(state)
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self._rebuild()
+        self.update()
+
+    # --- lifecycle ---
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._last = 0.0
+        self._timer.start()
+        super().showEvent(event)
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._timer.stop()
+        super().hideEvent(event)
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        self._rebuild()
+        super().resizeEvent(event)
+
+    # --- frame loop ---
+
+    def _on_tick(self) -> None:
+        now = time.monotonic()
+        dt = (now - self._last) if self._last else config.VISUALIZER_TICK_MS / 1000.0
+        self._last = now
+        self._model.tick(dt)
+        self.update()
+
+    # --- painting ---
+
+    def _rebuild(self) -> None:
+        """Re-derive bar templates + the accent gradient (resize/palette)."""
+        w, h = self.width(), self.height()
+        count = self._model.bars
+        gap = 3.0
+        bar_w = max(1.0, (w - gap * (count - 1)) / count)
+        self._floor = float(h) - 2.0
+        self._full_h = self._floor - 2.0
+        self._bars = [
+            QRectF(i * (bar_w + gap), 2.0, bar_w, self._full_h)
+            for i in range(count)
+        ]
+        grad = QLinearGradient(0.0, 0.0, 0.0, float(h))
+        grad.setColorAt(0.0, QColor(self._palette.accent_soft))
+        grad.setColorAt(1.0, QColor(self._palette.accent))
+        self._brush = QBrush(grad)
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(self._brush)
+        full = self._full_h
+        for rect, amp in zip(self._bars, self._model.amplitudes):
+            rect.setHeight(max(2.0, full * amp))   # in place: no per-frame allocations
+            rect.moveBottom(self._floor)
+            painter.drawRoundedRect(rect, 1.6, 1.6)
+        painter.end()
+
+
 # ----------------------------------------------------------------- player bar
 
 class PlayerBar(QWidget):
@@ -1537,7 +1715,7 @@ class PlayerBar(QWidget):
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(16, 10, 16, 10)
-        lay.setSpacing(12)
+        lay.setSpacing(10)   # was 12 — the mini-visualizer needs a snug row
 
         # left: cover + identity + pin
         self._cover = CoverTile(palette, 56)
@@ -1639,10 +1817,12 @@ class PlayerBar(QWidget):
         self._volume.setFixedWidth(110)
         self._volume.valueChanged.connect(lambda v: self.volume_changed.emit(v / 100.0))
 
+        self.visualizer = MiniVisualizer(palette)
         lay.addWidget(self._cover)
         lay.addLayout(ident, 1)
         lay.addWidget(self._pin)
         lay.addLayout(center, 3)
+        lay.addWidget(self.visualizer)
         lay.addWidget(self._btn_lyrics)
         lay.addWidget(self._btn_radio)
         lay.addWidget(self._btn_speed)
@@ -1675,6 +1855,10 @@ class PlayerBar(QWidget):
     def set_playing(self, playing: bool) -> None:
         self._btn_play.setText("⏸" if playing else "▶")
 
+    def set_visualizer_state(self, state: str) -> None:
+        """Feed the mini-visualizer: 'playing' | 'paused' | 'stopped'."""
+        self.visualizer.set_state(state)
+
     def set_status(self, text: str) -> None:
         self._artist.setText(text) if self._track is None else None
 
@@ -1703,6 +1887,7 @@ class PlayerBar(QWidget):
     def apply_palette(self, palette: Palette) -> None:
         self._palette = palette
         set_glow_color(self._play_glow, palette.accent, alpha=95)
+        self.visualizer.apply_palette(palette)
 
     @property
     def current_track(self) -> Track | None:

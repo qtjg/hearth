@@ -5,15 +5,26 @@ from __future__ import annotations
 import json
 import logging
 import sys
+import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from PyQt6.QtCore import QSettings, QStandardPaths, Qt, QThreadPool, QtMsgType
+from PyQt6.QtCore import (
+    QObject,
+    QSettings,
+    QStandardPaths,
+    Qt,
+    QTimer,
+    QThreadPool,
+    QtMsgType,
+    pyqtSignal,
+)
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 from . import config, theme, world
 from .catalog import Catalog
+from .command_palette import CommandAction, CommandPalette
 from .hotkeys import effective_chords
 from .jobs import (
     AlbumJob,
@@ -115,6 +126,52 @@ def _install_qt_log_bridge() -> None:
         pass
 
 
+class AlarmController(QObject):
+    """Wake-up alarm: a one-shot deadline that fades the fire back up.
+
+    Pure and headless-testable: the only time source is an injectable
+    clock (ms). The app wires `fired` to the fade-in and polls `poll()`
+    from a cheap timer; tests drive the clock by hand. Scheduling again
+    replaces the pending alarm; there is exactly one at a time and
+    nothing is ever persisted.
+    """
+
+    fired = pyqtSignal()
+
+    def __init__(self, clock=None, parent=None):
+        super().__init__(parent)
+        self._now = clock or (lambda: int(time.monotonic() * 1000))
+        self._deadline: int | None = None
+
+    @property
+    def armed(self) -> bool:
+        return self._deadline is not None
+
+    def schedule(self, minutes: float) -> int:
+        """Arm (or re-arm) the alarm; returns the deadline in clock ms."""
+        minutes = max(0.0, float(minutes))
+        self._deadline = self._now() + int(minutes * 60_000)
+        return self._deadline
+
+    def cancel(self) -> None:
+        """Disarm silently (no fire, no fuss)."""
+        self._deadline = None
+
+    def remaining_ms(self) -> int:
+        """Ms until the fire; 0 once disarmed (or already due)."""
+        if self._deadline is None:
+            return 0
+        return max(0, self._deadline - self._now())
+
+    def poll(self) -> bool:
+        """Fire if due (one-shot: disarmed first, then the signal). True on fire."""
+        if self._deadline is None or self._now() < self._deadline:
+            return False
+        self._deadline = None
+        self.fired.emit()
+        return True
+
+
 class Hearth:
     """Owns every component; one instance per process."""
 
@@ -188,6 +245,16 @@ class Hearth:
         # slot remembers the wallpaper see-through dial for persistence
         self._wallpaper_alpha = config.WALLPAPER_ALPHA_DEFAULT
         self.window = MainWindow(palette_key, store=self.store)
+        self.command_palette = CommandPalette(palette_key, parent=self.window)
+        # wake-up alarm: one-shot, tray-scheduled, fades the room back in
+        self.alarm = AlarmController(parent=self.qapp)
+        self.alarm.fired.connect(self._fire_alarm)
+        self._alarm_poll = QTimer(self.qapp)
+        self._alarm_poll.setInterval(1000)
+        self._alarm_poll.timeout.connect(self.alarm.poll)
+        self._alarm_fade: QTimer | None = None
+        self._alarm_target = 0.8
+        self._alarm_step = 0
         self.tray: HearthTray | None = None
 
         self._restore_settings()
@@ -195,6 +262,8 @@ class Hearth:
         self._wire_window()
         self._wire_core()
         self._install_hotkeys()
+        self._install_palette_hotkey()
+        self._register_palette_actions()
         self._build_tray()
         self._restore_session()
         if self.ui_mode == "window":
@@ -211,7 +280,7 @@ class Hearth:
         p.play_pause_requested.connect(self.core.toggle)
         p.next_requested.connect(self.core.next)
         p.prev_requested.connect(self.core.previous)
-        p.shuffle_requested.connect(self.core.shuffle)
+        p.shuffle_requested.connect(self._shuffle)
         p.repeat_requested.connect(self._cycle_repeat)
         p.volume_changed.connect(self.core.set_volume)
         p.seek_requested.connect(self.core.seek)
@@ -247,7 +316,7 @@ class Hearth:
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
-        w.shuffle_requested.connect(self.core.shuffle)
+        w.shuffle_requested.connect(self._shuffle)
         w.repeat_requested.connect(self._cycle_repeat)
         w.volume_changed.connect(self.core.set_volume)
         w.seek_requested.connect(self.core.seek)
@@ -273,6 +342,11 @@ class Hearth:
         self.core.rate_changed.connect(
             lambda r: self.window.player_bar.set_speed_label(r)
         )
+        # per-track speed memory: every rate change sticks to the song
+        self.core.rate_changed.connect(self._on_rate_changed)
+        self.core.state_changed.connect(
+            lambda _playing: self._update_visualizer_state()
+        )
 
     def _build_tray(self) -> None:
         if not QSystemTrayIcon.isSystemTrayAvailable():
@@ -296,7 +370,15 @@ class Hearth:
                 lambda _checked, m=minutes: self.core.set_sleep_timer(m or None)
             )
             sleep_menu.addAction(act)
-        self.tray = HearthTray(actions, menus=[sleep_menu], parent=self.qapp)
+        alarm_menu = QMenu("⏰ Wake-up")
+        for label, minutes in (("Off / cancel", 0), ("15 minutes", 15),
+                               ("30 minutes", 30), ("45 minutes", 45), ("60 minutes", 60)):
+            act = QAction(label, alarm_menu)
+            act.triggered.connect(
+                lambda _checked, m=minutes: self._arm_alarm(m)
+            )
+            alarm_menu.addAction(act)
+        self.tray = HearthTray(actions, menus=[sleep_menu, alarm_menu], parent=self.qapp)
         self.tray.activated.connect(self._on_tray_activated)
         self.tray.show()
 
@@ -317,6 +399,15 @@ class Hearth:
                 "toggle_panel": self._toggle_surface,
                 "focus_search": self._focus_search,
             }[action])
+
+    def _install_palette_hotkey(self) -> None:
+        """Ctrl+K pops the command palette (never a reserved system chord)."""
+        chord = "Ctrl+K"
+        if chord.lower() in {r.lower() for r in config.RESERVED_CHORDS}:
+            return
+        surface = self.window if self.ui_mode == "window" else self.panel
+        shortcut = QShortcut(QKeySequence(chord), surface)
+        shortcut.activated.connect(self._open_command_palette)
 
     # --- actions ---
 
@@ -709,10 +800,13 @@ class Hearth:
     def _on_track_changed(self, track: Track | None) -> None:
         self.panel.set_track(track)
         self.window.set_track(track)
+        self._update_visualizer_state()
         self.window.set_pinned(
             self.store.is_pinned(track.video_id) if track is not None else False
         )
-        self.store.log_play(track)
+        if track is not None:
+            self.store.log_play(track)
+            self._restore_track_rate(track)   # this song's remembered speed
         self._persist()
         # desktop lyrics: a new song means a fresh, empty strip
         self._lyrics_engine = None
@@ -752,6 +846,156 @@ class Hearth:
     def _cycle_rate(self) -> None:
         rate = self.core.next_rate()
         self.surface.set_status(f"Speed {rate:g}x")
+
+    # --- shuffle / smart shuffle (v0.8.0 controls) ---
+
+    def _shuffle(self) -> None:
+        """The shuffle button + S key: artist-spread when SMART_SHUFFLE is on.
+
+        Either way the contract is the one shuffle() always had —
+        upcoming only, history untouched, exactly one queue_changed —
+        so nothing downstream can tell the difference.
+        """
+        if config.SMART_SHUFFLE:
+            self.core.shuffle_smart()
+            self.surface.set_status("Smart shuffle — artists spread out")
+        else:
+            self.core.shuffle()
+
+    # --- per-track speed memory (v0.8.0 controls) ---
+
+    def _on_rate_changed(self, rate: float) -> None:
+        """Playback speed moved: stick it to the current track (no debounce)."""
+        track = self.core.engine.current
+        if track is None:
+            return   # a rate with no song belongs to nobody
+        self.store.set_track_pref(track.video_id, "rate", float(rate))
+
+    def _restore_track_rate(self, track: Track) -> None:
+        """A track starts: put its remembered speed back (default 1.0)."""
+        saved = self.store.track_pref(track.video_id, "rate", 1.0)
+        rate = saved if saved in config.PLAYBACK_RATES else 1.0
+        if abs(rate - self.core.rate) > 1e-9:
+            self.core.set_rate(rate)
+
+    # --- mini-visualizer state (v0.8.0 controls) ---
+
+    def _update_visualizer_state(self) -> None:
+        """Translate playback state into the player-bar equalizer's mood."""
+        if self.core.engine.current is None:
+            state = "stopped"
+        elif self.core.is_playing:
+            state = "playing"
+        else:
+            state = "paused"
+        self.window.player_bar.set_visualizer_state(state)
+
+    # --- command palette (v0.8.0 controls) ---
+
+    def _register_palette_actions(self) -> None:
+        """Fill the palette with every action the room answers to."""
+        self.command_palette.set_actions(self._palette_actions())
+
+    def _palette_actions(self) -> list[CommandAction]:
+        """The whole menu: transport, views, themes, favorite, speed, quit."""
+        acts = [
+            CommandAction("Play / Pause", self.core.toggle, "resume transport"),
+            CommandAction("Next track", self.core.next, "skip forward"),
+            CommandAction("Previous track", self.core.previous, "back"),
+            CommandAction("Shuffle queue", self._shuffle, "random mix smart"),
+            CommandAction("Cycle repeat", self._cycle_repeat, "loop all one off"),
+            CommandAction("Mute / Unmute", self._toggle_mute, "silence volume"),
+            CommandAction("Toggle favorite", self._palette_toggle_favorite,
+                          "pin heart like"),
+        ]
+        view_labels = {
+            "home": "Go to Home",
+            "discover": "Go to Discover",
+            "world": "Go to World Explorer",
+            "search": "Go to Search",
+            "library": "Go to Your Library",
+            "now": "Go to Now Playing",
+        }
+        for key in self.window.VIEWS:
+            label = view_labels.get(key, f"Go to {key}")
+            acts.append(CommandAction(label,
+                                      lambda k=key: self.window.show_view(k)))
+        for key, pal in config.PALETTES.items():
+            acts.append(CommandAction(f"Theme: {pal.label}",
+                                      lambda k=key: self._apply_palette_key(k),
+                                      f"palette color {key}"))
+        for rate in config.PLAYBACK_RATES:
+            acts.append(CommandAction(f"Speed {rate:g}x",
+                                      lambda r=rate: self.core.set_rate(r),
+                                      "playback tempo"))
+        acts.append(CommandAction("Quit Hearth", self.qapp.quit, "exit close"))
+        return acts
+
+    def _open_command_palette(self) -> None:
+        """Ctrl+K: fresh menu (theme packs may have grown), centered search."""
+        self._register_palette_actions()
+        self.command_palette.popup()
+
+    def _apply_palette_key(self, key: str) -> None:
+        """Switch the whole room to a built-in palette and remember it."""
+        pal = config.PALETTES.get(key)
+        if pal is None:
+            return
+        self.panel.apply_palette(pal)   # _restyle reads the panel's palette
+        self._restyle()
+        self.settings.setValue("theme", key)
+        self.surface.set_status(f"Theme: {pal.label}")
+
+    def _palette_toggle_favorite(self) -> None:
+        """Palette action: pin/unpin whatever is playing right now."""
+        track = self.core.engine.current
+        if track is not None:
+            self._toggle_pin(track)
+
+    # --- wake-up alarm (v0.8.0 controls) ---
+
+    def _arm_alarm(self, minutes: int) -> None:
+        """Tray schedule: N minutes from now (a new schedule replaces)."""
+        if minutes:
+            self.alarm.schedule(minutes)
+            self._alarm_poll.start()
+            self.surface.set_status(f"⏰ Wake-up in {minutes} min")
+        else:
+            self.alarm.cancel()
+            self._alarm_poll.stop()
+            self.surface.set_status("Wake-up alarm off")
+
+    def _fire_alarm(self) -> None:
+        """The alarm went off: start the music, swell the volume back up.
+
+        Reverse of the sleep timer's fade — silence to the pre-alarm
+        level over config.ALARM_FADE_MS, one-shot, nothing persisted.
+        """
+        self._alarm_poll.stop()
+        self._alarm_target = self.core.volume
+        self._alarm_step = 0
+        self.core.set_volume(0.0)
+        if not self.core.is_playing:
+            self.core.toggle()   # resume / first-queued behavior, as ever
+        self.surface.set_status("⏰ Rise and shine — the fire is lit")
+        if self._alarm_fade is None:
+            self._alarm_fade = QTimer(self.qapp)
+            self._alarm_fade.setInterval(
+                max(1, config.ALARM_FADE_MS // config.ALARM_FADE_STEPS))
+            self._alarm_fade.timeout.connect(self._alarm_fade_tick)
+        self._alarm_fade.start()
+
+    def _alarm_fade_tick(self) -> None:
+        """One rung up the volume ladder; the last rung restores exactly."""
+        self._alarm_step += 1
+        if self._alarm_step >= config.ALARM_FADE_STEPS:
+            if self._alarm_fade is not None:
+                self._alarm_fade.stop()
+            self.core.set_volume(self._alarm_target)
+            self._persist()
+            return
+        self.core.set_volume(
+            self._alarm_target * self._alarm_step / config.ALARM_FADE_STEPS)
 
     def _set_sleep(self, minutes: int) -> None:
         self.core.set_sleep_timer(minutes or None)
@@ -1001,6 +1245,7 @@ class Hearth:
         self.panel.apply_palette(pal)
         self.toast.setStyleSheet(theme.build_stylesheet(pal))
         self.overlay.set_palette(pal)
+        self.command_palette.apply_palette(pal)
 
     def _open_style_closet(self) -> None:
         """Live-preview style packs and wallpapers; cancel puts it back."""
@@ -1126,6 +1371,11 @@ class Hearth:
         upcoming = [t for t in (_track(e) for e in data.get("upcoming") or []) if t]
         if current is None and not upcoming:
             return False
+        rate = data.get("rate")
+        if isinstance(rate, (int, float)) and rate > 0:
+            # before restore_queue: no current track yet, so the rate
+            # change is not mistaken for a per-track speed preference
+            self.core.set_rate(float(rate))
         self.core.restore_queue(
             current, history, upcoming,
             resume_ms=int(data.get("position_ms") or 0),
@@ -1133,9 +1383,6 @@ class Hearth:
         volume = data.get("volume")
         if isinstance(volume, (int, float)):
             self.core.set_volume(float(volume))
-        rate = data.get("rate")
-        if isinstance(rate, (int, float)) and rate > 0:
-            self.core.set_rate(float(rate))
         repeat = data.get("repeat")
         if repeat in config.REPEAT_MODES:
             self.core.set_repeat(repeat)

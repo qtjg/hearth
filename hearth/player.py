@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import random
+from collections import deque
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 
@@ -46,11 +47,14 @@ class QueueEngine:
         self.upcoming: list[Track] = []
         self.current: Track | None = None
         self.repeat: str = config.REPEAT_OFF
+        # video ids played this session (smart shuffle never replays them)
+        self._recent_ids: deque[str] = deque(maxlen=config.SMART_SHUFFLE_RECENT_IDS)
 
     def clear(self) -> None:
         self.history.clear()
         self.upcoming.clear()
         self.current = None
+        self._recent_ids.clear()
 
     def start_queue(self, tracks: list[Track], start: int = 0) -> Track | None:
         """Replace the queue and start at index `start`."""
@@ -59,6 +63,7 @@ class QueueEngine:
         self.clear()
         self.current = tracks[start]
         self.upcoming = list(tracks[start + 1:])
+        self._remember(self.current)
         return self.current
 
     def play_now(self, track: Track) -> Track:
@@ -66,6 +71,7 @@ class QueueEngine:
         if self.current is not None:
             self.history.append(self.current)
         self.current = track
+        self._remember(track)
         return track
 
     def enqueue(self, track: Track) -> None:
@@ -92,6 +98,7 @@ class QueueEngine:
                 self.current = None
                 return None
         self.current = self.upcoming.pop(0)
+        self._remember(self.current)
         return self.current
 
     def go_back(self) -> Track | None:
@@ -100,11 +107,49 @@ class QueueEngine:
         if self.current is not None:
             self.upcoming.insert(0, self.current)
         self.current = self.history.pop()
+        self._remember(self.current)
         return self.current
+
+    def _remember(self, track: Track) -> None:
+        """Note a track as 'played this session' (bounded deque)."""
+        self._recent_ids.append(track.video_id)
 
     def shuffle(self) -> None:
         """Non-destructively shuffle the upcoming tracks (history untouched)."""
         self._rng.shuffle(self.upcoming)
+
+    def shuffle_upcoming_smart(self) -> None:
+        """Reorder upcoming so consecutive tracks rarely share an artist.
+
+        Greedy pass: at each step pick the candidate whose artist has
+        been waiting longest (max distance since that artist last
+        appeared — the current track counts as position 0). When every
+        remaining candidate shares the artist, the least-recent one
+        (queued longest ago) wins. Tracks already played this session
+        never come back. History untouched, same multiset of ids minus
+        those session replays — the non-destructive contract of
+        shuffle(), just with taste.
+        """
+        if not self.upcoming:
+            return
+        pool = [t for t in self.upcoming if t.video_id not in self._recent_ids]
+        if not pool:
+            return   # everything upcoming was just played — leave it be
+        last_seen: dict[str, int] = {}
+        if self.current is not None:
+            last_seen[self.current.artist] = -1   # the now-playing artist just played
+        picked: list[Track] = []
+        while pool:
+            best_i, best_d = 0, -1
+            for i, track in enumerate(pool):
+                artist = track.artist
+                distance = len(picked) - last_seen[artist] if artist in last_seen else 1 << 30
+                if distance > best_d:
+                    best_i, best_d = i, distance   # strict >: ties keep the earliest
+            chosen = pool.pop(best_i)
+            last_seen[chosen.artist] = len(picked)
+            picked.append(chosen)
+        self.upcoming = picked
 
     def set_order(self, upcoming: list[Track]) -> None:
         """Replace the upcoming order exactly as given (drag & drop result)."""
@@ -287,6 +332,15 @@ class PlaybackCore(QObject):
         self.engine.shuffle()
         self.queue_changed.emit()
 
+    def shuffle_smart(self) -> None:
+        """Opt-in smart shuffle: spread artists through the upcoming queue.
+
+        Same contract as shuffle() — upcoming only, history untouched,
+        one queue_changed — so nothing in the stream/error paths cares.
+        """
+        self.engine.shuffle_upcoming_smart()
+        self.queue_changed.emit()
+
     def set_repeat(self, mode: str) -> None:
         if mode not in config.REPEAT_MODES:
             return
@@ -329,6 +383,11 @@ class PlaybackCore(QObject):
     @property
     def rate(self) -> float:
         return self._rate
+
+    @property
+    def is_playing(self) -> bool:
+        """True while the backend reports audio flowing (no Qt enums)."""
+        return self._playing
 
     @property
     def position_ms(self) -> int:
