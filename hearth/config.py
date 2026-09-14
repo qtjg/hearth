@@ -155,6 +155,14 @@ LASTFM_API_KEY = ""           # user keys; empty = the scrobble bridge sleeps
 LASTFM_SECRET = ""
 LASTFM_ENABLED = False        # opt-in; not wired into playback (roadmap guardrail)
 
+# --- v0.7.0 finale (31-c6): Discord Rich Presence + the Glow Mix ---
+DISCORD_CLIENT_ID = ""          # user-set Discord application id; empty = presence sleeps
+DISCORD_RPC_THROTTLE_S = 15.0   # at most one presence push per 15 s (track changes always push)
+DISCORD_RPC_BACKOFF_S = 60.0    # after a failed connect/update, wait this long before retrying
+GLOW_MIX_ARTISTS = 3            # top rotation artists whose kindred tracks feed the Glow Mix
+GLOW_MIX_ROTATION_SHARE = 0.6   # ~60% of the blend comes from your rotation
+HISTORY_CHIP_DAYS = 14          # day-jump chips shown on the history page
+
 VERSION = "0.6.3"
 
 REPEAT_OFF = "off"

@@ -33,6 +33,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0.0,<10"]
+discord = ["pypresence>=4"]
 
 [project.scripts]
 hearth = "hearth.app:main"

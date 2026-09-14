@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import sys
 import time
 from logging.handlers import RotatingFileHandler
@@ -28,6 +29,11 @@ from .ambient import AmbientChannel
 from .catalog import Catalog
 from .command_palette import CommandAction, CommandPalette
 from .diagnostics import gather_report
+from .discord_presence import (
+    AVAILABLE as DISCORD_AVAILABLE,
+    DiscordPresence,
+    Throttle,
+)
 from .hotkeys import effective_chords
 from .jobs import (
     AlbumJob,
@@ -172,6 +178,96 @@ def _coerce_track(entry) -> Track | None:
     except (TypeError, ValueError):
         return None
     return track if track.video_id and track.title else None
+
+
+class GlowMixJob(QRunnable):
+    """Harvests kindred tracks for the Glow Mix on the job pool.
+
+    For each seed (the top track of a top rotation artist) it rides the
+    same Start Radio plumbing RadioJob uses — ``catalog.radio(video_id)``
+    — which returns real playable tracks from kindred artists. Seeds
+    that fail are quietly skipped; the app falls back to the rotation
+    alone when the whole harvest comes up empty.
+    """
+
+    def __init__(self, catalog: Catalog, seeds: list[Track],
+                 rotation: list[Track]):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.catalog = catalog
+        self.seeds = list(seeds)
+        self.rotation = list(rotation)
+
+    def run(self) -> None:  # noqa: D102 - QRunnable entry
+        kindred: list[Track] = []
+        for seed in self.seeds:
+            try:
+                kindred.extend(
+                    self.catalog.radio(seed.video_id, limit=config.RADIO_LIMIT))
+            except Exception:  # noqa: BLE001 - a bad seed costs nothing
+                continue
+        self.signals.emit_safe(self.signals.finished,
+                               (list(self.rotation), kindred))
+
+
+def glow_seeds(rotation: list[Track], limit: int) -> list[Track]:
+    """One seed per distinct artist from the top of the rotation (pure).
+
+    The blend wants breadth, not more of the same act — so the first
+    track of every distinct artist becomes a seed, rotation order kept.
+    Artist-less tracks still seed (their video_id stand in) so a
+    rotation of one-off uploads can blend too.
+    """
+    seeds: list[Track] = []
+    seen_artists: set[str] = set()
+    seen_ids: set[str] = set()
+    for track in rotation:
+        if track.video_id in seen_ids:
+            continue
+        artist = (getattr(track, "artist", "") or "").strip().lower()
+        key = artist or f"id:{track.video_id}"
+        if key in seen_artists:
+            continue
+        seen_artists.add(key)
+        seen_ids.add(track.video_id)
+        seeds.append(track)
+        if len(seeds) >= max(1, int(limit)):
+            break
+    return seeds
+
+
+def blend_glow(rotation: list[Track], kindred: list[Track],
+               size: int) -> list[Track]:
+    """The Glow Mix blend — pure, deterministic, deduped by video_id.
+
+    ~60% rotation (config.GLOW_MIX_ROTATION_SHARE), the rest kindred
+    tracks, capped at `size`; rotation wins duplicates. A thin kindred
+    harvest is topped up from the rest of the rotation, so the mix is
+    never shorter than the music we already know.
+    """
+    size = max(0, int(size))
+    if size == 0:
+        return []
+    rot: list[Track] = []
+    seen: set[str] = set()
+    for track in rotation:
+        if track.video_id in seen:
+            continue
+        seen.add(track.video_id)
+        rot.append(track)
+    kin: list[Track] = []
+    for track in kindred:
+        if track.video_id in seen:
+            continue
+        seen.add(track.video_id)
+        kin.append(track)
+    n_rot = min(len(rot), round(size * config.GLOW_MIX_ROTATION_SHARE))
+    mix = rot[:n_rot]
+    mix.extend(kin[: size - len(mix)])
+    if len(mix) < size:   # kindred ran dry — let the rotation fill the rest
+        mix.extend(rot[n_rot: n_rot + (size - len(mix))])
+    return mix[:size]
 
 
 def _i18n_label(key: str, fallback: str) -> str:
@@ -345,6 +441,14 @@ class Hearth:
                                quit=self.qapp.quit)
             self.mpris.start()
 
+        # Discord Rich Presence: opt-in, guarded, silent everywhere pypresence
+        # is absent — and it never touches the audio path. It only wakes up
+        # when the user flips the tray switch (which itself is gated on
+        # config.DISCORD_RPC_ENABLED, off in tests/CI).
+        self.presence = DiscordPresence(backoff_s=config.DISCORD_RPC_BACKOFF_S)
+        self._presence_throttle = Throttle(config.DISCORD_RPC_THROTTLE_S)
+        self._presence_duration_ms = 0
+
         # plugins: quiet, time-boxed, before settings so a plugin palette
         # pack exists by the time pickers and restores go looking for it
         self._load_plugins()
@@ -407,6 +511,7 @@ class Hearth:
         w.style_closet_requested.connect(self._open_style_closet)
         w.local_add_folder_requested.connect(self._local_add_folder)
         w.local_rescan_requested.connect(self._local_rescan)
+        w.glow_mix_requested.connect(self._glow_mix)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -461,6 +566,14 @@ class Hearth:
             actions["update"] = self._make_action(
                 "🕯️ Newer hearth — don't whisper again", self._dismiss_update_whisper
             )
+        if config.DISCORD_RPC_ENABLED:
+            # the flag gates the action's existence; importability gates its
+            # use (a grayed row beats a toggle that can never connect)
+            discord_act = self._make_action(
+                "🎮 Discord Rich Presence", self._on_discord_action)
+            discord_act.setCheckable(True)
+            discord_act.setEnabled(DISCORD_AVAILABLE)
+            actions["discord"] = discord_act
         lyrics_act = self._make_action("🪧 Desktop lyrics", self._toggle_overlay)
         lyrics_act.setCheckable(True)
         lyrics_act.setChecked(self._overlay_on)
@@ -1079,6 +1192,7 @@ class Hearth:
             "local": "Go to Local songs",
             "now": "Go to Now Playing",
             "stats": "Go to Stats",
+            "history": "Go to History",
         }
         for key in self.window.VIEWS:
             label = view_labels.get(key, f"Go to {key}")
@@ -1268,6 +1382,71 @@ class Hearth:
         from PyQt6.QtCore import QUrl
 
         return QUrl.fromLocalFile(path).toString()
+
+    # --- the Glow Mix (v0.7.0 rituals) ---
+
+    def _glow_mix(self) -> None:
+        """✨ One tap in the On Repeat shelf: your rotation plus kindred fire."""
+        self._start_glow_mix()
+
+    def _start_glow_mix(self, store=None, fetch_kindred=None) -> None:
+        """Gather the rotation, fetch kindred tracks, blend, play.
+
+        Headless-testable seam: tests may pass a `store` (a fake
+        HearthStore) and a synchronous `fetch_kindred(seeds) ->
+        list[Track]` instead of the job pool. Never dead-ends — an
+        empty rotation gets a gentle note, and a failed/empty fetch
+        falls back to playing the rotation as-is.
+        """
+        store = self.store if store is None else store
+        try:
+            rotation = list(store.on_repeat(config.GLOW_MIX_SIZE))
+        except Exception:   # noqa: BLE001 - a grumpy store still plays something
+            rotation = []
+        if not rotation:
+            self.surface.set_status(
+                "Nothing on repeat yet — play a few songs, then light the Glow Mix")
+            return
+        if fetch_kindred is None:
+            if not self._enable_streaming:
+                self._play_glow(rotation, kindred=False)   # test mode: no network
+                return
+            self.surface.set_status("mixing your Glow Mix…")
+            job = GlowMixJob(
+                self.catalog,
+                glow_seeds(rotation, config.GLOW_MIX_ARTISTS),
+                rotation,
+            )
+            job.signals.finished.connect(self._on_glow_ready)
+            self._launch(job)
+            return
+        self.surface.set_status("mixing your Glow Mix…")
+        try:
+            kindred = list(
+                fetch_kindred(glow_seeds(rotation, config.GLOW_MIX_ARTISTS)))
+        except Exception:   # noqa: BLE001 - fetch trouble falls back, never dead-ends
+            kindred = []
+        self._on_glow_ready((rotation, kindred))
+
+    def _on_glow_ready(self, payload) -> None:
+        """The kindred harvest landed (rotation, kindred): blend and light it."""
+        rotation, kindred = payload
+        mix = blend_glow(list(rotation), list(kindred), config.GLOW_MIX_SIZE)
+        self._play_glow(mix, kindred=bool(kindred))
+
+    def _play_glow(self, tracks: list[Track], kindred: bool = True) -> None:
+        """Shuffle the blend into the queue — the ritual's final flourish."""
+        mix = list(tracks)
+        if not mix:
+            self.surface.set_status("Glow Mix came up empty — play more music first")
+            return
+        random.shuffle(mix)
+        if kindred:
+            self.surface.set_status(
+                f"✨ Glow Mix: {len(mix)} tracks — your rotation plus kindred fire")
+        else:
+            self.surface.set_status("✨ Glow Mix: your rotation, straight up")
+        self._play_list(mix)
 
     # --- wake-up alarm (v0.8.0 controls) ---
 
@@ -1529,6 +1708,86 @@ class Hearth:
         self._diag_dlg = dlg
         dlg.show()
 
+    # --- Discord Rich Presence (v0.7.0 reach, opt-in, guarded) ---
+
+    def _on_discord_action(self, checked: bool = False) -> None:
+        """The tray toggle flipped: connect or disconnect the bridge."""
+        self._set_discord_presence(bool(checked))
+
+    def _set_discord_presence(self, on: bool) -> None:
+        """Wire (or unwind) the presence signals. Never raises.
+
+        The config flag gates everything; an empty DISCORD_CLIENT_ID
+        means there is nothing to connect to — a status note says so,
+        no signals are hooked and no connection is attempted.
+        """
+        if not config.DISCORD_RPC_ENABLED:
+            return
+        if not on:
+            self._disconnect_presence()
+            self.surface.set_status("🎮 Discord presence off")
+            return
+        client_id = str(getattr(config, "DISCORD_CLIENT_ID", "") or "").strip()
+        if not client_id:
+            self.surface.set_status(
+                "🎮 Discord presence: set DISCORD_CLIENT_ID in hearth/config.py first")
+            return
+        if not self.presence.start(client_id):
+            self.surface.set_status(
+                "🎮 Discord presence unavailable — is Discord running?")
+            return
+        self._presence_duration_ms = 0
+        self.core.track_changed.connect(self._on_presence_track)
+        self.core.position_changed.connect(self._on_presence_position)
+        self.core.duration_changed.connect(self._on_presence_duration)
+        track = self.core.engine.current
+        if track is not None:
+            self._on_presence_track(track)
+        self.surface.set_status("🎮 Discord presence on")
+
+    def _disconnect_presence(self) -> None:
+        """Unhook every presence signal and drop the IPC (idempotent)."""
+        for signal, slot in (
+            (self.core.track_changed, self._on_presence_track),
+            (self.core.position_changed, self._on_presence_position),
+            (self.core.duration_changed, self._on_presence_duration),
+        ):
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass   # not connected — nothing to unwind
+        self.presence.clear()
+        self.presence.stop()
+
+    def _on_presence_track(self, track: Track | None) -> None:
+        """Track changes push immediately (and re-arm the position throttle)."""
+        if track is None:
+            self.presence.clear()   # between tracks / stopped: wipe the profile
+            return
+        self._presence_throttle.stamp()   # the track-change push owns this window
+        self._push_presence(track)
+
+    def _on_presence_position(self, position_ms: int) -> None:
+        """Position ticks are throttled: at most one push per window."""
+        if not self._presence_throttle.allow():
+            return
+        self._push_presence(self.core.engine.current)
+
+    def _on_presence_duration(self, duration_ms: int) -> None:
+        self._presence_duration_ms = max(0, int(duration_ms))
+
+    def _push_presence(self, track: Track | None) -> None:
+        """One presence push: core timestamps + a 'Listen along' button."""
+        if track is None:
+            return
+        duration_ms = self._presence_duration_ms or int(track.duration_sec) * 1000
+        self.presence.update_track(
+            track,
+            elapsed_s=max(0, int(self.core.position_ms)) / 1000.0,
+            duration_s=max(0, int(duration_ms)) / 1000.0,
+            youtube_url=f"https://www.youtube.com/watch?v={track.video_id}",
+        )
+
     # --- persistence ---
 
     def _restore_settings(self) -> None:
@@ -1772,6 +2031,7 @@ class Hearth:
         QThreadPool.globalInstance().waitForDone(5000)
         self.ambient.stop()   # release the ambience sink fully on the way out
         self.mpris.stop()
+        self.presence.stop()  # and let Discord forget the hearth until next time
         self._persist()
         self.store.close()
 

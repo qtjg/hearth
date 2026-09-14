@@ -13,7 +13,7 @@ import math
 import random
 import time
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
@@ -128,6 +128,26 @@ class Shelf(QWidget):
 
     card_picked = pyqtSignal(object, list)      # Track, shelf context
 
+    def header_button(self, text: str, tooltip: str = "") -> QPushButton:
+        """A small chip button beside the shelf title (one-shot rituals).
+
+        The title row is rebuilt into a header strip so a caller can drop
+        an action (the ✨ Glow Mix button) exactly where its shelf lives.
+        The button carries no behavior — connect its `clicked` yourself.
+        """
+        btn = QPushButton(text)
+        btn.setProperty("chip", True)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setToolTip(tooltip)
+        lay = self.layout()
+        lay.removeWidget(self._title)
+        row = QHBoxLayout()
+        row.addWidget(self._title)
+        row.addStretch(1)
+        row.addWidget(btn)
+        lay.insertLayout(0, row)
+        return btn
+
     def __init__(self, palette: Palette, title: str):
         super().__init__()
         self._palette = palette
@@ -195,6 +215,8 @@ class Shelf(QWidget):
 class HomeView(QWidget):
     """Scrolling shelves: quick picks, on repeat, pinned favorites, recent."""
 
+    glow_mix_requested = pyqtSignal()   # ✨ the one-tap ritual button
+
     def __init__(self, palette: Palette):
         super().__init__()
         self._palette = palette
@@ -219,6 +241,11 @@ class HomeView(QWidget):
         self._hero = QLabel("Good fire to sit by. What are we playing?")
         self._hero.setProperty("hero", True)
         self._body_lay.insertWidget(0, self._hero)
+        # the one-tap ritual lives where the rotation it grows from lives
+        self._glow_button = self._shelves["On Repeat"].header_button(
+            "✨ Glow Mix", "Your rotation blended with kindred artists' fire")
+        self._glow_button.clicked.connect(
+            lambda _=False: self.glow_mix_requested.emit())
 
     def shelf(self, name: str) -> Shelf:
         return self._shelves[name]
@@ -401,6 +428,7 @@ class LibraryView(QWidget):
     track_activated = pyqtSignal(object, list)
     menu_requested = pyqtSignal(object, object)
     create_playlist_requested = pyqtSignal()
+    import_requested = pyqtSignal()              # 📥 import playlists (JSON / M3U)
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -415,8 +443,15 @@ class LibraryView(QWidget):
         new_btn = QPushButton("＋ New playlist")
         new_btn.setProperty("accent", True)
         new_btn.clicked.connect(self.create_playlist_requested.emit)
+        import_btn = QPushButton("📥 Import…")
+        import_btn.setProperty("chip", True)
+        import_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        import_btn.setToolTip("Import playlists from JSON or M3U files")
+        import_btn.clicked.connect(lambda _=False: self.import_requested.emit())
+        self._import_btn = import_btn
         head.addWidget(hero)
         head.addStretch(1)
+        head.addWidget(import_btn)
         head.addWidget(new_btn)
         outer.addLayout(head)
 
@@ -1890,6 +1925,164 @@ class StatsView(QWidget):
         return self._empty_state
 
 
+def day_label(day: str) -> str:
+    """'2026-02-16' → 'Feb 16' (readable chips; odd days render raw)."""
+    try:
+        return datetime.strptime(str(day), "%Y-%m-%d").strftime("%b %d")
+    except (TypeError, ValueError):
+        return str(day)
+
+
+class HistoryView(TrackListView):
+    """🕘 Every play, day by day: jump chips, a paged "All", double-click-to-play.
+
+    A pure view over HearthStore's history — refresh() re-reads
+    history_days() and repaints the chip row; picking a day lists
+    history_on(day); "All" pages through history_slice() with a
+    Show-more button. Zero new storage methods, zero network.
+    """
+
+    def __init__(self, palette: Palette, store: HearthStore | None = None,
+                 page_size: int | None = None):
+        super().__init__(palette)
+        self.store = store
+        self._page_size = max(1, int(page_size or config.HISTORY_PAGE_SIZE))
+        self._page = 0
+        self._all: list[Track] = []      # accumulated rows of the current listing
+        self._has_more = False
+        self._day: str | None = None     # None = All
+        self._head.setText("🕘 History")
+
+        self._chips_area = QScrollArea()
+        self._chips_area.setWidgetResizable(True)
+        self._chips_area.setFixedHeight(44)
+        self._chips_area.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._chips_area.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._chips_bar = QWidget()
+        self._chips_lay = QHBoxLayout(self._chips_bar)
+        self._chips_lay.setContentsMargins(2, 2, 2, 2)
+        self._chips_lay.setSpacing(6)
+        self._chips_lay.setAlignment(Qt.AlignmentFlag.AlignLeft)
+        self._chips_area.setWidget(self._chips_bar)
+
+        self._more_btn = QPushButton("Show more")
+        self._more_btn.setProperty("chip", True)
+        self._more_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._more_btn.clicked.connect(self._show_more)
+        self._more_btn.hide()
+
+        self._empty = QLabel("nothing played yet — light the fire")
+        self._empty.setProperty("dim", True)
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        row = QHBoxLayout()
+        row.addWidget(self._chips_area, 1)
+        row.addWidget(self._more_btn)
+        lay = self.layout()
+        lay.insertLayout(1, row)                       # below the header
+        lay.insertWidget(lay.indexOf(self._list), self._empty)
+        self._chips: dict[str | None, QPushButton] = {}
+        self._empty.hide()
+
+    # --- data in ---
+
+    def refresh(self) -> None:
+        """Re-read the store: rebuild chips + repaint the current listing."""
+        days: list[tuple[str, int]] = []
+        if self.store is not None:
+            try:
+                days = list(self.store.history_days())
+            except Exception:   # noqa: BLE001 - a grumpy store shows an empty page
+                days = []
+        has_any = bool(days)
+        self._empty.setVisible(not has_any)
+        self._list.setVisible(has_any)
+        self._chips_area.setVisible(has_any)
+        self._build_chips(days[: config.HISTORY_CHIP_DAYS])
+        self._load_current()
+
+    def _build_chips(self, days: list[tuple[str, int]]) -> None:
+        """The chip row: 'All' first, then the newest listening days."""
+        self._chips = {}
+        while self._chips_lay.count():
+            item = self._chips_lay.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        all_chip = self._make_chip("All")
+        all_chip.clicked.connect(lambda _=False: self._select_day(None))
+        self._chips[None] = all_chip
+        self._chips_lay.addWidget(all_chip)
+        for day, count in days:
+            chip = self._make_chip(day_label(day), tooltip=f"{count} plays")
+            chip.clicked.connect(lambda _=False, d=day: self._select_day(d))
+            self._chips[day] = chip
+            self._chips_lay.addWidget(chip)
+        self._chips_lay.addStretch(1)
+        self._sync_chips()
+
+    def _make_chip(self, label: str, tooltip: str = "") -> QPushButton:
+        chip = QPushButton(label)
+        chip.setProperty("chip", True)
+        chip.setCheckable(True)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        if tooltip:
+            chip.setToolTip(tooltip)
+        return chip
+
+    def _sync_chips(self) -> None:
+        for key, chip in self._chips.items():
+            chip.setChecked(key == self._day)
+
+    def _select_day(self, day: str | None) -> None:
+        """A chip was clicked (None = All): reload the listing under it."""
+        self._day = day
+        self._sync_chips()
+        self._load_current()
+
+    def _load_current(self) -> None:
+        if self.store is None:
+            self._all = []
+            self._has_more = False
+            self._more_btn.hide()
+            self.set_tracks([])
+            return
+        try:
+            if self._day is None:
+                self._page = 0
+                tracks, self._has_more = self.store.history_slice(
+                    0, self._page_size)
+                self._all = list(tracks)
+            else:
+                self._all = list(self.store.history_on(
+                    self._day, limit=self._page_size))
+                self._has_more = False
+        except Exception:   # noqa: BLE001 - a grumpy store beats a crash
+            self._all = []
+            self._has_more = False
+        self._more_btn.setVisible(self._has_more)
+        self.set_tracks(self._all)
+
+    def _show_more(self) -> None:
+        """Append the next 'All' page (day views stay single-page)."""
+        if self._day is not None or self.store is None or not self._has_more:
+            return
+        self._page += 1
+        try:
+            tracks, has_more = self.store.history_slice(
+                self._page, self._page_size)
+        except Exception:   # noqa: BLE001 - paging stops politely
+            self._has_more = False
+            self._more_btn.hide()
+            return
+        self._all.extend(tracks)
+        self._has_more = has_more
+        self._more_btn.setVisible(has_more)
+        self.set_tracks(self._all)
+
+
 # ----------------------------------------------------------------- visualizer
 
 class VisualizerModel:
@@ -2543,6 +2736,7 @@ class MainWindow(QMainWindow):
     style_closet_requested = pyqtSignal()            # open the style closet
     local_add_folder_requested = pyqtSignal()        # 📂 pick a folder to scan
     local_rescan_requested = pyqtSignal()            # 🔄 rescan remembered roots
+    glow_mix_requested = pyqtSignal()                # ✨ one-tap Glow Mix ritual
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -2552,7 +2746,7 @@ class MainWindow(QMainWindow):
     seek_requested = pyqtSignal(int)
 
     VIEWS = ("home", "discover", "world", "search", "library", "local",
-             "now", "stats")
+             "now", "stats", "history")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -2574,11 +2768,12 @@ class MainWindow(QMainWindow):
         self.artist_view = ArtistView(self._palette)
         self.theater_view = TheaterView(self._palette)   # full-screen stage
         self.stats_view = StatsView(self._palette, store=store)  # memory page
+        self.history_view = HistoryView(self._palette, store=store)  # 🕘 day jumps
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.discover_view, self.world_view,
                      self.search_view, self.library_view, self.local_view,
-                     self.now_view, self.stats_view,
+                     self.now_view, self.stats_view, self.history_view,
                      self.album_view, self.remote_playlist_view,
                      self.artist_view):
             self.stack.addWidget(view)
@@ -2638,7 +2833,8 @@ class MainWindow(QMainWindow):
                            ("library", "📚 Your Library"),
                            ("local", "📁 Local"),
                            ("now", "🎧 Now Playing"),
-                           ("stats", "📊 Stats")):
+                           ("stats", "📊 Stats"),
+                           ("history", "🕘 History")):
             btn = QPushButton(label)
             btn.setProperty("nav", True)
             btn.setCheckable(True)
@@ -2786,6 +2982,18 @@ class MainWindow(QMainWindow):
         self.stats_view.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )
+        self.history_view.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        self.history_view.menu_requested.connect(self._track_menu)
+        # drive-by fix (31-c5b gap): the Local view's buttons speak view-local
+        # signal names — relay them onto the MainWindow signals the app hears
+        self.local_view.add_folder_requested.connect(
+            self.local_add_folder_requested.emit)
+        self.local_view.rescan_requested.connect(
+            self.local_rescan_requested.emit)
+        self.home_view.glow_mix_requested.connect(self.glow_mix_requested.emit)
+        self.library_view.import_requested.connect(self._import_files_dialog)
         for view in (self.search_view, self.library_view._recent):
             view.menu_requested.connect(self._track_menu)
         self.player_bar.play_pause_requested.connect(self.play_pause_requested.emit)
@@ -2842,6 +3050,8 @@ class MainWindow(QMainWindow):
             self.search_view._box.setFocus()
         elif name == "stats":
             self.stats_view.refresh()
+        elif name == "history":
+            self.history_view.refresh()
 
     def focus_search(self) -> None:
         self.show_view("search")
@@ -3065,21 +3275,29 @@ class MainWindow(QMainWindow):
         item = self._playlist_list.itemAt(pos)
         if item is None:
             return
-        pid = int(item.data(Qt.ItemDataRole.UserRole))
+        menu = self._build_playlist_menu(int(item.data(Qt.ItemDataRole.UserRole)))
+        menu.exec(self._playlist_list.viewport().mapToGlobal(pos))
+
+    def _build_playlist_menu(self, playlist_id: int) -> QMenu:
+        """The sidebar playlist row's menu, built standalone (so the actions
+        and their wiring stay testable without a blocking exec)."""
         menu = QMenu(self)
         open_act = menu.addAction("Open")
-        export_act = menu.addAction("⬇ Export…")
+        export_share = menu.addAction("⬆ Export…")              # hearth share format
+        export_all = menu.addAction("📤 Export all (JSON)…")    # every playlist
+        export_m3u = menu.addAction("📤 Export M3U…")           # this playlist
         rename_act = menu.addAction("Rename")
         delete_act = menu.addAction("Delete")
-        chosen = menu.exec(self._playlist_list.viewport().mapToGlobal(pos))
-        if chosen is open_act:
-            self.open_playlist(pid)
-        elif chosen is export_act:
-            self._export_playlist(pid)
-        elif chosen is rename_act:
-            self._rename_playlist(pid)
-        elif chosen is delete_act:
-            self._delete_playlist(pid)
+        open_act.triggered.connect(lambda: self.open_playlist(playlist_id))
+        export_share.triggered.connect(
+            lambda: self._export_playlist(playlist_id))
+        export_all.triggered.connect(
+            lambda: self._export_all_playlists(playlist_id))
+        export_m3u.triggered.connect(
+            lambda: self._export_playlist_m3u(playlist_id))
+        rename_act.triggered.connect(lambda: self._rename_playlist(playlist_id))
+        delete_act.triggered.connect(lambda: self._delete_playlist(playlist_id))
+        return menu
 
     # --- playlist share (export / import) ---
 
@@ -3129,6 +3347,109 @@ class MainWindow(QMainWindow):
                 self.store.add_to_playlist(pid, track)
         self.refresh_playlists()
         self.set_status(f"Imported {len(imported)} playlist(s) from {path}")
+
+    # --- playlist export / import (storage-backed: JSON for everything, M3U per list) ---
+
+    def _export_all_playlists(self, _playlist_id: int = 0) -> None:
+        """📤 Every playlist as one portable JSON (asks where first)."""
+        if self.store is None:
+            return
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export all playlists (JSON)",
+            "hearth-playlists.json",
+            "JSON (*.json);;All files (*)",
+        )
+        if not path:
+            return
+        self._export_all_playlists_to(path)
+
+    def _export_all_playlists_to(self, path: str) -> bool:
+        """Write the all-playlists JSON to `path` (tests call this directly)."""
+        if self.store is None:
+            return False
+        try:
+            ok = bool(self.store.export_playlists(path))
+        except Exception:   # noqa: BLE001 - storage is safe, but belt & braces
+            ok = False
+        if ok:
+            self.set_status(
+                f"📤 Exported {len(self.store.playlists())} playlist(s) → {path}")
+        else:
+            self.set_status(f"Could not write {path}")
+        return ok
+
+    def _export_playlist_m3u(self, playlist_id: int) -> None:
+        """📤 One playlist as a standard M3U (asks where first)."""
+        if self.store is None:
+            return
+        name = self.store.playlist_name(playlist_id) or "playlist"
+        path, _filter = QFileDialog.getSaveFileName(
+            self, "Export playlist as M3U",
+            f"{name}.m3u",
+            "M3U playlist (*.m3u *.m3u8);;All files (*)",
+        )
+        if not path:
+            return
+        self._export_playlist_m3u_to(playlist_id, path)
+
+    def _export_playlist_m3u_to(self, playlist_id: int, path: str) -> bool:
+        """Write one playlist's M3U to `path` (tests call this directly)."""
+        if self.store is None:
+            return False
+        try:
+            ok = bool(self.store.export_m3u(playlist_id, path))
+        except Exception:   # noqa: BLE001 - never raise out of a menu handler
+            ok = False
+        if ok:
+            self.set_status(f"📤 Exported M3U → {path}")
+        else:
+            self.set_status("Could not export that playlist as M3U")
+        return ok
+
+    def _import_files_dialog(self) -> None:
+        """📥 Pick a .json / .m3u file and hand it to the importer."""
+        if self.store is None:
+            return
+        path, _filter = QFileDialog.getOpenFileName(
+            self, "Import playlists", "",
+            "Playlists (*.json *.m3u *.m3u8);;All files (*)",
+        )
+        if not path:
+            return
+        self._import_playlist_file(path)
+
+    def _import_playlist_file(self, path: str) -> str:
+        """Import by extension: JSON playlists / M3U (file stem names it).
+
+        Returns the status note (tests drive this directly, bypassing the
+        dialog). Bad files produce a note, never a crash, and the sidebar
+        playlist list always refreshes.
+        """
+        if self.store is None:
+            return "no library to import into"
+        suffix = Path(path).suffix.lower()
+        try:
+            if suffix == ".json":
+                imported = self.store.import_playlists(path)
+                note = (
+                    f"📥 Imported {imported} playlist(s) from {Path(path).name}"
+                    if imported
+                    else "No playlists in that file — is it a hearth export?"
+                )
+            elif suffix in (".m3u", ".m3u8"):
+                added = self.store.import_m3u(path, Path(path).stem)
+                note = (
+                    f"📥 Imported {added} tracks into “{Path(path).stem}”"
+                    if added
+                    else "No playable entries in that M3U"
+                )
+            else:
+                note = "Unsupported playlist file — use .json or .m3u"
+        except Exception:   # noqa: BLE001 - a hostile file must stay boring
+            note = "That file could not be imported"
+        self.refresh_playlists()
+        self.set_status(note)
+        return note
 
     def _queue_menu(self, pos) -> None:
         item = self._queue_list.itemAt(pos)
