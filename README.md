@@ -19,6 +19,9 @@
 
 *Sidebar navigation · Home shelves · Playlists · Now Playing with lyrics · Endless radio · Runs where you run*
 
+<a href="https://github.com/qtjg"><img src="https://img.shields.io/badge/designed_%26_built_by-Mayank_Bhaskar-ff7a18?style=flat-square&labelColor=1b1f2a" alt="Designed and built by Mayank Bhaskar"/></a>
+<a href="https://github.com/qtjg?tab=followers"><img src="https://img.shields.io/github/followers/qtjg?style=flat-square&color=7b2ff7&labelColor=1b1f2a&label=follow" alt="GitHub followers of qtjg"/></a>
+
 <img src="docs/assets/ember-divider.svg" width="100%" alt=""/>
 
 </div>
@@ -26,7 +29,7 @@
 <details open>
 <summary><strong>📑 Jump around</strong> — the whole README, indexed</summary>
 
-[🧊 The System, in 3D](#-the-system-in-3d) · [🔥 The Immune System](#-the-immune-system--self-healing-playback-v063) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🪞 Glass & Motion v0.6.2](#-glass--motion--the-2020s-pass-v062) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [📜 License](#-license)
+[🧊 The System, in 3D](#-the-system-in-3d) · [🔥 The Immune System](#-the-immune-system--self-healing-playback-v063) · [🐍 The Firekeeper Snake](#-the-firekeeper-snake) · [📸 Inside the Hearth](#-inside-the-hearth) · [🎤 Spotlight v0.6.1](#-spotlight--artist-pages--words-that-keep-the-beat-v061) · [🪞 Glass & Motion v0.6.2](#-glass--motion--the-2020s-pass-v062) · [🖼️ The Big Window v0.3](#-the-big-window-v03) · [📻 Radio & Words v0.4/v0.5](#-radio-lyrics--words-v04--v05) · [🌍 Discover v0.6](#-discover--every-music-in-the-world-v06) · [🗺️ World Explorer v0.6](#-world-explorer--the-curated-dial-v06) · [🧭 How Hearth Grew](#-how-hearth-grew) · [✨ What It Does](#-what-it-does) · [🐧 Install](#-arch-linux-first-class) · [⌨️ Hotkeys](#-default-hotkeys) · [🗂️ Structure](#-project-structure) · [🧪 Testing](#-testing) · [🗺️ Roadmap](#-roadmap) · [👤 Made by Mayank](#-made-by-mayank-bhaskar) · [📜 License](#-license)
 
 </details>
 
@@ -92,14 +95,18 @@ All of them are committed SVGs rendered with isometric polygons, layered
 gradients and SMIL keyframe animations (`animate`, `animateTransform`,
 `animateMotion`), so they animate inside GitHub's sanitized `<img>` pipeline
 with **zero** JavaScript and **zero** third-party requests. The 🔥 ember
-dividers dance between sections on the same diet. Want them standalone? Open
+dividers dance between sections on the same diet — and the 🤖 **Hearth
+Keeper**, the project's own 3D mascot, waves from the maker section below
+with a flame in its chest, blinking eyes and a beaming smile. Want them
+standalone? Open
 [`docs/assets/hero-3d.svg`](docs/assets/hero-3d.svg),
 [`docs/assets/arch-3d.svg`](docs/assets/arch-3d.svg),
 [`docs/assets/spotlight-3d.svg`](docs/assets/spotlight-3d.svg),
-[`docs/assets/selfheal-3d.svg`](docs/assets/selfheal-3d.svg) or
+[`docs/assets/selfheal-3d.svg`](docs/assets/selfheal-3d.svg),
+[`docs/assets/hearth-keeper.svg`](docs/assets/hearth-keeper.svg) or
 [`docs/assets/ember-divider.svg`](docs/assets/ember-divider.svg) in any browser
-and watch the equalizer dance, the stack hover and the lyric beam flow in
-real time.
+and watch the equalizer dance, the stack hover, the Keeper wave and the lyric
+beam flow in real time.
 
 </details>
 
@@ -612,6 +619,34 @@ green.
 
 ---
 
+## 👤 Made by Mayank Bhaskar
+
+<div align="center">
+
+<img src="docs/assets/hearth-keeper.svg" width="300" alt="The Hearth Keeper — Hearth's 3D mascot, a friendly robot firekeeper with glowing orange headphones and a hearth flame glowing in its chest"/>
+
+### Designed · Engineered · Maintained by **[Mayank Bhaskar](https://github.com/qtjg)**
+
+Hearth is a one-person build. The product shape, the three-pane window, the
+playback core, the self-healing immune system, every 3D diagram and the mascot
+above, and all **588 tests** are imagined, written and maintained end-to-end
+by Mayank — no scaffold, no boilerplate team, just one builder and a fire that
+keeps growing warmer with every release.
+
+<a href="https://github.com/qtjg"><img src="https://img.shields.io/badge/github-%40qtjg-ff7a18?style=for-the-badge&logo=github&logoColor=white&labelColor=1b1f2a" alt="@qtjg on GitHub"/></a>
+<a href="https://github.com/qtjg/hearth/issues/new"><img src="https://img.shields.io/badge/say%20hi-open%20an%20issue-7b2ff7?style=for-the-badge&labelColor=1b1f2a" alt="Open an issue and say hi"/></a>
+
+<br/>
+
+<a href="https://github.com/qtjg"><img src="https://github-readme-stats.vercel.app/api?username=qtjg&show_icons=true&theme=github_dark_orange&hide_border=true&bg_color=0d1117" height="165" alt="Mayank Bhaskar's GitHub stats"/></a>
+<a href="https://github.com/qtjg"><img src="https://github-readme-stats.vercel.app/api/top-langs/?username=qtjg&layout=compact&theme=github_dark_orange&hide_border=true&bg_color=0d1117" height="165" alt="Mayank Bhaskar's top languages"/></a>
+
+</div>
+
+<img src="docs/assets/ember-divider.svg" width="100%" alt=""/>
+
+---
+
 ## 📜 License
 
 **Hearth** is distributed under the [MIT License](LICENSE).
@@ -620,6 +655,7 @@ green.
 
 <img src="https://capsule-render.vercel.app/api?type=waving&height=110&color=0:7b2ff7,50:ff2d55,100:ff7a18&section=footer" width="100%" alt=""/>
 
-<sub><strong>Hearth</strong> — keep the fire warm. 🔥</sub>
+<sub><strong>Hearth</strong> — keep the fire warm. 🔥<br/>
+Crafted with 🔥 by <a href="https://github.com/qtjg"><strong>Mayank Bhaskar</strong></a> · v0.7.0 “The Big Burn”</sub>
 
 </div>
