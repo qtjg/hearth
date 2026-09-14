@@ -516,20 +516,22 @@ not just claimed.
 ## 🗺️ Roadmap
 
 The living plan — waves, acceptance criteria, and the wish pool — lives in
-**[ROADMAP.md](ROADMAP.md)**. v0.6.3 just taught Hearth to keep the fire
-burning — finished tracks roll on, dead streams rejoin mid-song; the
-headline of what burns next:
+**[ROADMAP.md](ROADMAP.md)**. Every planned add-on now burns inside ONE
+main version — **v0.7.0 "The Big Burn"** — four rooms, built in order:
 
-- 🔥 **v0.7.0 — Memory & Rituals**: listen history shelves, "On Repeat"
-  smart playlist, the Glow Mix, queue persistence, Discord Rich Presence,
+- 🕯️ **Memory & Rituals**: listen history shelves, "On Repeat" smart
+  playlist, the Glow Mix, queue persistence, Discord Rich Presence,
   playlist export/import, stats dashboard + a yearly Wrapped story
-- 🎭 **v0.8.0 — The Wider Stage**: desktop lyrics overlay, theater mode,
-  palette packs + theme editor, per-track speed memory, lyrics settings &
+- 🎭 **The Wider Stage**: desktop lyrics overlay, theater mode, palette
+  packs + theme editor, per-track speed memory, lyrics settings &
   translation, Ctrl+K command palette, ambient mixer, wake-up alarm
-- 📦 **v0.9.0 — Reach**: AUR / winget / brew, update whisper, diagnostics,
+- 📦 **Reach**: AUR / winget / brew, update whisper, diagnostics,
   MPRIS + media keys
-- 🎪 **v1.0.0 — The Festival**: gapless playback, native backend probe,
-  plugin hooks, multi-language UI, smart shuffle
+- 🎪 **The Festival**: gapless playback, native backend probe, plugin
+  hooks, multi-language UI, smart shuffle
+
+The fire is lit: the On Repeat engine + home shelf, day-grouped history,
+listening stats and queue persistence have already landed — 290 tests green.
 
 ---
 

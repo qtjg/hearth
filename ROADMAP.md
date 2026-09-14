@@ -4,9 +4,10 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-14**, right after v0.6.3 (Keep the Fire Burning —
-> the self-healing playback pass). Every add-on discussed with the crew now
-> has a row — nothing lives only in a chat log anymore.
+> Last stoked: **2026-09-14**. By crew decision, every wave was folded into
+> **one main version** — all four themes, one fire, built in order. Every
+> add-on discussed with the crew has a row here; nothing lives only in a
+> chat log anymore.
 
 ---
 
@@ -19,8 +20,9 @@
 | v0.6.0 | The wide world | Discover (charts / moods / ~280 playlists) + World Explorer (74 genre stations) |
 | v0.6.1 | The spotlight | **artist pages** (face, top tracks, releases, kindred acts) + **synced lyrics** (LRCLIB, glowing line, click-to-seek) |
 | v0.6.2 | Glass & Motion | gradients, glass surfaces, shadows & accent glows, 3D rounded covers + floor reflection, view crossfades, glossy EQ bars |
+| v0.6.3 | Keep the Fire Burning | self-healing playback: EndOfMedia relay, mid-song rejoin, stall watchdog, guarded error-skip |
 
-254 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
+290 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.
 
 ---
@@ -38,20 +40,28 @@ network layer is *never-raises*; the UI never blocks on the world.
 
 ---
 
-## 🔥 v0.7.0 — Memory & Rituals
+## 🔥 v0.7.0 — The Big Burn *(the one main version)*
 
-*The hearth should know you. This wave makes Hearth remember.*
+*Every add-on, one fire. Four rooms, built in order — Memory & Rituals →
+The Wider Stage → Reach → The Festival. 🚧 marks the rows already under
+construction.*
 
-1. **Listen history** — `storage.log_play()` already records every play;
+### 🕯️ Room 1 — Memory & Rituals
+
+*The hearth should know you. This room makes Hearth remember.*
+
+1. 🚧 **Listen history** — `storage.log_play()` already records every play;
    surface it as a "Recently played" shelf and a full history page with
-   day-jumps. Your past becomes a playlist.
-2. **"On Repeat" smart playlist** — an auto-updating top-25 computed from
-   play counts (decayed so last week beats last year). Appears in the
-   Library next to your pins.
+   day-jumps. Your past becomes a playlist. *(day-grouped `history_page()`
+   + listening stats landed under test; the page UI is next)*
+2. 🚧 **"On Repeat" smart playlist** — an auto-updating top-25 computed
+   from play counts decayed so last week beats last year. Appears on Home
+   next to your pins. *(decayed `on_repeat()` engine + Home shelf landed)*
 3. **The Glow Mix** — a Friday-evening ritual: one tap builds a fresh mix
    from your heavy rotation + the related artists the v0.6.1 pages gave us.
-4. **Queue persistence** — the queue, its order, and its position survive a
-   restart. Close the laptop mid-song, open it on the same beat.
+4. 🚧 **Queue persistence** — the queue, its order, and its position
+   survive a restart. Close the laptop mid-song, open it on the same beat.
+   *(snapshot save/restore + resume-on-play landed under test)*
 5. **Discord Rich Presence** 🎮 — show the burning track on your profile
    via `pypresence` (opt-in): title, artist, elapsed time, "Listen along"
    button linking the YouTube URL Hearth already copies.
@@ -62,14 +72,12 @@ network layer is *never-raises*; the UI never blocks on the world.
    and tracks, month-at-a-glance — all from the same play log — plus a
    shareable year-end "Wrapped" page with the fireplace doing the honors.
 
-**Acceptance:** history & On Repeat fully headless-tested; queue restores
+**Room bar:** history & On Repeat fully headless-tested; queue restores
 in <1 s; Rich Presence never touches the audio path and degrades silently
 when Discord is absent; export round-trips (export → wipe → import →
 identical library) are covered by tests.
 
----
-
-## 🎭 v0.8.0 — The Wider Stage
+### 🎭 Room 2 — The Wider Stage
 
 *The same fire, more rooms.*
 
@@ -93,13 +101,11 @@ identical library) are covered by tests.
 8. **Wake-up alarm** — the sleep timer's sibling: fade in a station or
    playlist at a set time, gentle exponential ramp in reverse.
 
-**Acceptance:** overlay composites at 60 fps with zero audio interference;
+**Room bar:** overlay composites at 60 fps with zero audio interference;
 themes are pure data files (no code); lyrics rendering changes never block
 the audio path; everything survives the offscreen suite.
 
----
-
-## 📦 v0.9.0 — Reach
+### 📦 Room 3 — Reach
 
 *Every desktop means every desktop.*
 
@@ -116,13 +122,11 @@ the audio path; everything survives the offscreen suite.
    SMTC on Windows — lockscreen and media-key play/pause/next work even
    when the window is buried. The desktop finally knows Hearth is lit.
 
-**Acceptance:** fresh-machine installs verified on all three OSes; the
+**Room bar:** fresh-machine installs verified on all three OSes; the
 update check is off by default in tests and never blocks startup; MPRIS
 signals are headless-tested with a fake bus.
 
----
-
-## 🎪 v1.0.0 — The Festival
+### 🎪 Room 4 — The Festival
 
 *The 1.0 bar: nothing left that a listener would call "missing".*
 
@@ -144,11 +148,11 @@ signals are headless-tested with a fake bus.
 
 ## 🌱 Wish pool
 
-*Not scheduled, not forgotten — promoted into a wave when the fire is ready:*
+*Not scheduled, not forgotten — promoted into a room when the fire is ready:*
 
 - Last.fm scrobbling bridge (opt-in, keyed)
 - Local music library side-by-side with YT Music shelves
-- Podcasts & audiobooks shelf (speed memory from v0.8.0 makes this sing)
+- Podcasts & audiobooks shelf (per-track speed memory makes this sing)
 - Listening parties — share a queue link, synced "next track" voting
 - Mini-visualizer in the player bar (palette-colored, GPU-cheap)
 
@@ -159,6 +163,6 @@ signals are headless-tested with a fake bus.
 - The catalogue never raises; a dead shelf is an empty shelf with a note.
 - Every job runs on the worker pools; the UI thread only paints.
 - Lyrics and metadata stay keyless; opt-in bridges never gate core playback.
-- Every wave lands with headless tests; CI stays 3 OS × 2 Python green.
+- Every room lands with headless tests; CI stays 3 OS × 2 Python green.
 - Only this repo's own shelves are touched — no account data leaves the
   machine except to the services the user chose.
