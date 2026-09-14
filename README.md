@@ -4,7 +4,7 @@
 
 <img src="docs/assets/hero-3d.svg" width="100%" alt="Hearth — a cozy three-pane desktop player for YouTube Music"/>
 
-<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=56&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
+<a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=72&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Gradients+%C2%B7+glows+%C2%B7+3D+covers+%C2%B7+crossfades;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
 ![tests](https://img.shields.io/badge/tests-254%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
@@ -307,6 +307,11 @@ All of it derives from the same seven palettes at compile time — pick
 **Frost**, **Orchid**, **Grove** or any other theme and the whole 2020s
 layer recolors with it.
 
+See it in real pixels: every screenshot in 📸 [Inside the
+Hearth](#-inside-the-hearth) already wears this pass — the accent halo
+behind covers, the gradient surfaces and the floor reflection are the
+glass layer doing its thing.
+
 ## 🧭 How Hearth Grew
 
 Five ships, five waves — each one a full layer of the app:
@@ -364,10 +369,11 @@ That's the last four releases in one lap of the room.
 | 🖥️ **Tray presence** | Play, pause, skip, or summon the window from the system tray; a second launch just wakes the first |
 | ⌨️ **Hotkeys** | App-scope chords for every common action, with system-shortcut conflict detection |
 | 📻 **Radio & autoplay** | Endless playback: Start Radio from any track, auto-refill when the queue dries |
-| 🌍 **Discover the world** 🆕 | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
-| 🗺️ **World Explorer** 🆕 | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
-| 🎤 **Artist pages** 🆕 | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
-| ✨ **Synced lyrics** 🆕 | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
+| 🌍 **[Discover the world](#-discover--every-music-in-the-world-v06)** · v0.6 🆕 | Charts, trending, new releases, moods & genres — every playlist on YT Music, browsable without typing |
+| 🗺️ **[World Explorer](#-world-explorer--the-curated-dial-v06)** · v0.6 🆕 | 74 curated genre stations across 9 regions, filter + dice, search-everywhere web fallback |
+| 🎤 **[Artist pages](#-spotlight--artist-pages--words-that-keep-the-beat-v061)** · v0.6.1 🆕 | Face, story, top tracks, albums & singles, kindred acts — every artist one context-menu tap away |
+| ✨ **[Synced lyrics](#-spotlight--artist-pages--words-that-keep-the-beat-v061)** · v0.6.1 🆕 | LRCLIB time-cued lines that glow with the song; click any line to seek; graceful plain-text fallbacks |
+| 🪞 **[Glass & Motion](#-glass--motion--the-2020s-pass-v062)** · v0.6.2 🆕 | Gradient glass surfaces, accent glows, 3D beveled covers with floor reflections, view crossfades — the whole layer recolors per theme |
 | 💿 **Album pages** | Search Albums scope → full track list with Play all / Shuffle |
 | 🔥 **Top tracks** | Home shelf ranked by your real play counts |
 | 💾 **Remembers everything** | Window size/position, volume, theme, repeat mode, speed, autoplay, favorites, playlists, and history persist |
