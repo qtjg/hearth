@@ -323,7 +323,8 @@ Five ships, five waves — each one a full layer of the app:
 | v0.5 | 🔍 Scopes & Shortcuts | search scopes, album pages, top tracks, in-window hotkeys |
 | v0.6 | 🌍 Discover + 🗺️ World Explorer | the whole YT Music catalogue + a 74-station world dial |
 | v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
-| **v0.6.2** | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades — **current release** |
+| v0.6.2 | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades |
+| **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, dead streams get skipped or rejoined mid-song — **current release** |
 
 ### 🆕 New stuff — the add-on map
 
@@ -332,6 +333,7 @@ lives, and the fastest way to feel it:
 
 | Add-on | Wave | Where it lives | Try this first |
 |:---|:---|:---|:---|
+| 🔥 **Self-healing playback** | v0.6.3 | the audio core | start a radio and walk away — finished tracks roll on by themselves, and a stream that dies mid-song gets skipped (or rejoined) without you lifting a finger |
 | 🪞 **Glass & Motion** | v0.6.2 | the entire window | swap to **Frost** or **Orchid** in the tray — every gradient, glow and 3D cover repaints itself |
 | 🪩 **3D covers & reflections** | v0.6.2 | Now Playing & every card grid | press `N` — the cover floats on an accent halo over a fading floor mirror |
 | 🎤 **Artist pages** | v0.6.1 | right-click any track → *🎤 Artist page* | shuffle the **Top tracks**, then hop the **Fans also like** rail |
