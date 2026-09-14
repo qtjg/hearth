@@ -320,10 +320,29 @@ Five ships, five waves — each one a full layer of the app:
 | v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
 | **v0.6.2** | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades — **current release** |
 
-**New here? A 60-second tour of the new stuff:** open 🧭 **Discover** and tap
-a mood → hop to 🗺️ **World** and hit **🎲 Surprise me** → right-click any
-track and choose **🎤 Artist page** → press `N` for the Now Playing stage and
-watch the ✨ lyric lines glow in time — click one to send the song there.
+### 🆕 New stuff — the add-on map
+
+Every recent wave left add-ons behind. Here's the whole crate, where each one
+lives, and the fastest way to feel it:
+
+| Add-on | Wave | Where it lives | Try this first |
+|:---|:---|:---|:---|
+| 🪞 **Glass & Motion** | v0.6.2 | the entire window | swap to **Frost** or **Orchid** in the tray — every gradient, glow and 3D cover repaints itself |
+| 🪩 **3D covers & reflections** | v0.6.2 | Now Playing & every card grid | press `N` — the cover floats on an accent halo over a fading floor mirror |
+| 🎤 **Artist pages** | v0.6.1 | right-click any track → *🎤 Artist page* | shuffle the **Top tracks**, then hop the **Fans also like** rail |
+| ✨ **Synced lyrics** | v0.6.1 | the Now Playing stage | click any glowing line to send the song there — instant karaoke |
+| 🌍 **Discover** | v0.6 | the 🧭 tab | tap a mood chip (Chill, Focus, Party…), then **▶ Play all** |
+| 🗺️ **World Explorer** | v0.6 | the 🗺️ tab | **🎲 Surprise me** — 74 stations across nine regions, one tap |
+| 🔎 **Search fallback** | v0.6 | everywhere | paste a rare track name — songs → videos → the web index, it finds it |
+| 📻 **Endless radio** | v0.4 | right-click → *📻 Start Radio* | let the queue run dry and watch it refill itself |
+| 🔍 **Scopes & hotkeys** | v0.5 | the search box | `/` to jump in, `S` shuffle, `R` repeat, `Q` queue |
+
+**New here? The 60-second tour:** open 🧭 **Discover** and tap a mood → hop
+to 🗺️ **World** and hit **🎲 Surprise me** → right-click any track and choose
+**🎤 Artist page** → press `N` for the Now Playing stage and watch the ✨
+lyric lines glow in time — click one to send the song there → finish on the
+player bar: swap themes and watch the whole 🪞 glass layer recolor itself.
+That's the last four releases in one lap of the room.
 
 ---
 
