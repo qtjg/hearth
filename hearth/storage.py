@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -15,7 +16,7 @@ from .config import (
     ON_REPEAT_LIMIT,
     STATS_TOP_LIMIT,
 )
-from .models import Track, parse_duration
+from .models import Track, format_duration, parse_duration
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS favorites (
@@ -54,6 +55,15 @@ CREATE TABLE IF NOT EXISTS track_prefs (
     key      TEXT NOT NULL,
     value    REAL NOT NULL,
     PRIMARY KEY (video_id, key)
+);
+CREATE TABLE IF NOT EXISTS local_tracks (
+    video_id   TEXT PRIMARY KEY,
+    path       TEXT NOT NULL UNIQUE,
+    title      TEXT NOT NULL,
+    artist     TEXT NOT NULL DEFAULT '',
+    album      TEXT NOT NULL DEFAULT '',
+    duration_s REAL NOT NULL DEFAULT 0,
+    added_at   REAL NOT NULL DEFAULT (unixepoch('now'))
 );
 """
 
@@ -370,6 +380,131 @@ class HearthStore:
             "SELECT key, value FROM track_prefs WHERE video_id = ?", (video_id,)
         ).fetchall()
         return {key: float(value) for key, value in rows}
+
+    # --- local library (v0.7.0): your own files by the fire ---
+
+    @staticmethod
+    def local_video_id(path: str | Path) -> str:
+        """Stable id for a file on disk: 'local-' + a short path hash.
+
+        Same path in, same id out — re-scans update instead of duplicating.
+        """
+        digest = hashlib.sha1(str(path).encode("utf-8", "replace")).hexdigest()
+        return f"local-{digest[:16]}"
+
+    @staticmethod
+    def _local_track(video_id: str, path: str, title: str, artist: str,
+                     album: str, duration_s: float) -> Track:
+        """A local_tracks row as a Track (unknown duration renders as '—')."""
+        seconds = max(0, int(float(duration_s or 0)))
+        return Track(
+            video_id=video_id,
+            title=title,
+            artist=artist,
+            duration=format_duration(seconds) if seconds else "—",
+            duration_sec=seconds,
+        )
+
+    def upsert_local_track(
+        self,
+        path: str | Path,
+        title: str,
+        artist: str = "",
+        album: str = "",
+        duration_s: float = 0.0,
+    ) -> Track:
+        """Insert or refresh one local file; returns it as a Track.
+
+        The path is the identity: a re-scan of the same file updates
+        title/artist/album/duration and keeps its video_id + added_at.
+        """
+        clean_path = str(path)
+        video_id = self.local_video_id(clean_path)
+        self._db.execute(
+            "INSERT INTO local_tracks (video_id, path, title, artist, album, duration_s) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET title = excluded.title, "
+            "artist = excluded.artist, album = excluded.album, "
+            "duration_s = excluded.duration_s",
+            (video_id, clean_path, str(title), str(artist), str(album),
+             max(0.0, float(duration_s))),
+        )
+        self._db.commit()
+        return self._local_track(video_id, clean_path, str(title), str(artist),
+                                 str(album), float(duration_s))
+
+    def upsert_local_tracks(self, entries: list[dict]) -> tuple[int, int]:
+        """Batch upsert for the scanner — one transaction, ``(added, updated)``.
+
+        Entries are ``{path, title, artist?, album?, duration_s?}`` dicts;
+        malformed ones and within-batch duplicate paths are skipped.
+        `added` counts paths that were not in the library before.
+        """
+        clean: list[tuple] = []
+        seen_paths: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            path = str(entry.get("path") or "").strip()
+            title = str(entry.get("title") or "").strip()
+            if not path or not title or path in seen_paths:
+                continue
+            seen_paths.add(path)
+            clean.append((
+                self.local_video_id(path), path, title,
+                str(entry.get("artist") or ""),
+                str(entry.get("album") or ""),
+                max(0.0, float(entry.get("duration_s") or 0.0)),
+            ))
+        if not clean:
+            return 0, 0
+        known = {
+            str(row[0]) for row in self._db.execute(
+                "SELECT path FROM local_tracks"
+            ).fetchall()
+        }
+        self._db.executemany(
+            "INSERT INTO local_tracks (video_id, path, title, artist, album, duration_s) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(path) DO UPDATE SET title = excluded.title, "
+            "artist = excluded.artist, album = excluded.album, "
+            "duration_s = excluded.duration_s",
+            clean,
+        )
+        self._db.commit()
+        added = sum(1 for row in clean if row[1] not in known)
+        return added, len(clean) - added
+
+    def local_tracks(self) -> list[Track]:
+        """Every local song, artist → album → title order (stable, library-like)."""
+        rows = self._db.execute(
+            "SELECT video_id, path, title, artist, album, duration_s "
+            "FROM local_tracks "
+            "ORDER BY artist COLLATE NOCASE, album COLLATE NOCASE, "
+            "title COLLATE NOCASE"
+        ).fetchall()
+        return [self._local_track(*row) for row in rows]
+
+    def local_track_path(self, video_id: str) -> str | None:
+        """The file behind a 'local-…' video id (the playback resolve)."""
+        row = self._db.execute(
+            "SELECT path FROM local_tracks WHERE video_id = ?", (video_id,)
+        ).fetchone()
+        return str(row[0]) if row else None
+
+    def remove_local_track(self, path: str | Path) -> bool:
+        """Drop one local file from the library. True when it was there."""
+        cur = self._db.execute(
+            "DELETE FROM local_tracks WHERE path = ?", (str(path),)
+        )
+        self._db.commit()
+        return cur.rowcount > 0
+
+    def local_track_count(self) -> int:
+        (count,) = self._db.execute(
+            "SELECT COUNT(*) FROM local_tracks"
+        ).fetchone()
+        return int(count)
 
     # --- playlists ---
 

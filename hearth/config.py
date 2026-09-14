@@ -139,6 +139,13 @@ ALARM_FADE_MS = 20_000           # wake-up fade-in window (silence → pre-alarm
 ALARM_FADE_STEPS = 10            # steps inside that window
 VISUALIZER_TICK_MS = 60          # mini-visualizer animation frame
 
+# --- v0.7.0: plugins + the local library (your own files by the fire) ---
+PLUGINS_DIR_NAME = "plugins"     # folder under the app data dir holding plugins
+PLUGIN_BOOT_TIMEOUT_S = 10.0     # boot plugin load is time-boxed, never delays
+LOCAL_AUDIO_SUFFIXES = (".mp3", ".flac", ".ogg", ".m4a", ".wav")
+LOCAL_SCAN_CAP = 5000            # max audio files per scan
+LOCAL_SCAN_TIMEOUT_S = 60.0      # soft wall-clock budget for a scan walk
+
 VERSION = "0.6.3"
 
 REPEAT_OFF = "off"

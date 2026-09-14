@@ -211,7 +211,7 @@ class HomeView(QWidget):
         self._shelves: dict[str, Shelf] = {}
         for name in (
             "Quick picks", "Top tracks", "On Repeat", "Pinned favorites",
-            "Recently played",
+            "Recently played", "🔌 Plugins",
         ):
             self._shelves[name] = Shelf(palette, name)
             self._body_lay.addWidget(self._shelves[name])
@@ -435,6 +435,47 @@ class LibraryView(QWidget):
 
     def set_recent(self, tracks: list[Track]) -> None:
         self._recent.set_tracks(list(tracks)[:8])
+
+
+class LocalView(TrackListView):
+    """Your own files: the scanned local library plus its folder controls.
+
+    Deliberately thin — the buttons only raise signals, the app does the
+    scanning (on a worker pool) and pushes the tracks back in.
+    """
+
+    add_folder_requested = pyqtSignal()
+    rescan_requested = pyqtSignal()
+
+    def __init__(self, palette: Palette):
+        super().__init__(palette)
+        self._head.setText("📁 Local songs")
+        tools = QHBoxLayout()
+        tools.setSpacing(6)
+        add_btn = QPushButton("📂 Add folder…")
+        add_btn.setProperty("chip", True)
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        add_btn.clicked.connect(self.add_folder_requested.emit)
+        rescan_btn = QPushButton("🔄 Rescan")
+        rescan_btn.setProperty("chip", True)
+        rescan_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        rescan_btn.clicked.connect(self.rescan_requested.emit)
+        tools.addWidget(add_btn)
+        tools.addWidget(rescan_btn)
+        tools.addStretch(1)
+        lay = self.layout()
+        lay.insertLayout(1, tools)     # below the header, above the count
+        self._empty = QLabel("no local songs yet — point hearth at a folder")
+        self._empty.setProperty("dim", True)
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.insertWidget(lay.indexOf(self._list), self._empty)
+        self._empty.hide()
+
+    def set_tracks(self, tracks: list[Track]) -> None:
+        super().set_tracks(tracks)
+        has = bool(tracks)
+        self._empty.setVisible(not has)
+        self._list.setVisible(has)
 
 
 class DiscoverView(QWidget):
@@ -2500,6 +2541,8 @@ class MainWindow(QMainWindow):
     discover_enqueue_all_requested = pyqtSignal(list)  # queue a whole curated list
     world_station_requested = pyqtSignal(object)     # world.Genre — tune a station
     style_closet_requested = pyqtSignal()            # open the style closet
+    local_add_folder_requested = pyqtSignal()        # 📂 pick a folder to scan
+    local_rescan_requested = pyqtSignal()            # 🔄 rescan remembered roots
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -2508,8 +2551,8 @@ class MainWindow(QMainWindow):
     volume_changed = pyqtSignal(float)
     seek_requested = pyqtSignal(int)
 
-    VIEWS = ("home", "discover", "world", "search", "library", "now",
-             "stats")
+    VIEWS = ("home", "discover", "world", "search", "library", "local",
+             "now", "stats")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -2524,6 +2567,7 @@ class MainWindow(QMainWindow):
         self.world_view = WorldView(self._palette)
         self.search_view = SearchView(self._palette)
         self.library_view = LibraryView(self._palette)
+        self.local_view = LocalView(self._palette)     # scanned local files
         self.now_view = NowView(self._palette)
         self.album_view = AlbumView(self._palette)
         self.remote_playlist_view = RemotePlaylistView(self._palette)
@@ -2533,8 +2577,8 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.discover_view, self.world_view,
-                     self.search_view, self.library_view, self.now_view,
-                     self.stats_view,
+                     self.search_view, self.library_view, self.local_view,
+                     self.now_view, self.stats_view,
                      self.album_view, self.remote_playlist_view,
                      self.artist_view):
             self.stack.addWidget(view)
@@ -2592,6 +2636,7 @@ class MainWindow(QMainWindow):
         for key, label in (("home", "🏠 Home"), ("discover", "🧭 Discover"),
                            ("world", "🗺️ World"), ("search", "🔍 Search"),
                            ("library", "📚 Your Library"),
+                           ("local", "📁 Local"),
                            ("now", "🎧 Now Playing"),
                            ("stats", "📊 Stats")):
             btn = QPushButton(label)
@@ -2690,7 +2735,7 @@ class MainWindow(QMainWindow):
 
     def _wire_internal(self) -> None:
         for shelf_name in ("Quick picks", "Top tracks", "Pinned favorites",
-                           "Recently played"):
+                           "Recently played", "🔌 Plugins"):
             self.home_view.shelf(shelf_name).card_picked.connect(
                 lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
             )
@@ -2734,6 +2779,10 @@ class MainWindow(QMainWindow):
         )
         self.library_view.playlist_opened.connect(self.open_playlist)
         self.library_view.create_playlist_requested.connect(self._new_playlist_dialog)
+        self.local_view.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
+        self.local_view.menu_requested.connect(self._track_menu)
         self.stats_view.track_activated.connect(
             lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
         )
@@ -2875,6 +2924,9 @@ class MainWindow(QMainWindow):
 
     def set_on_repeat(self, tracks: list[Track]) -> None:
         self.home_view.set_shelf("On Repeat", tracks)
+
+    def set_local_tracks(self, tracks: list[Track]) -> None:
+        self.local_view.set_tracks(list(tracks))
 
     # --- playlists ---
 

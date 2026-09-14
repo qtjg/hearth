@@ -11,6 +11,7 @@ from pathlib import Path
 
 from PyQt6.QtCore import (
     QObject,
+    QRunnable,
     QSettings,
     QStandardPaths,
     Qt,
@@ -20,9 +21,9 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QSystemTrayIcon
 
-from . import config, theme, world, ytm_resilience
+from . import config, plugins, theme, world, ytm_resilience
 from .catalog import Catalog
 from .command_palette import CommandAction, CommandPalette
 from .diagnostics import gather_report
@@ -38,7 +39,9 @@ from .jobs import (
     ScopedSearchJob,
     SearchJob,
     WorldJob,
+    _SignalCarrier,
 )
+from .local_scan import LocalScanJob
 from .lyrics import SyncedLyrics
 from .lyrics_overlay import LyricsOverlay
 from .models import Album, Artist, Collection, Track
@@ -127,6 +130,47 @@ def _install_qt_log_bridge() -> None:
         qInstallMessageHandler(_qt_message)
     except Exception:  # noqa: BLE001 - no PyQt6 here: keep the default behavior
         pass
+
+
+class _PluginShelfJob(QRunnable):
+    """Calls registered plugin shelf sources off the UI thread.
+
+    A source may do anything (that is the plugin's business) — which is
+    exactly why it runs here and not on the main thread. Its Track-shaped
+    dicts are coerced defensively: junk entries are dropped, not fatal.
+    """
+
+    def __init__(self, sources: dict):
+        super().__init__()
+        self.setAutoDelete(False)
+        self.signals = _SignalCarrier()
+        self.sources = dict(sources)
+
+    def run(self) -> None:
+        results: list[tuple[str, list[Track]]] = []
+        failures: list[tuple[str, str]] = []
+        for name, fn in self.sources.items():
+            try:
+                raw = fn() or []
+            except Exception as exc:   # noqa: BLE001 - the plugin boundary
+                failures.append((name, str(exc)))
+                continue
+            tracks = [t for t in (_coerce_track(e) for e in raw) if t]
+            results.append((name, tracks))
+        self.signals.emit_safe(self.signals.finished, (results, failures))
+
+
+def _coerce_track(entry) -> Track | None:
+    """A Track, or a Track-shaped dict, or None (garbage in, nothing out)."""
+    if isinstance(entry, Track):
+        return entry if entry.video_id and entry.title else None
+    if not isinstance(entry, dict):
+        return None
+    try:
+        track = Track.from_dict(entry)
+    except (TypeError, ValueError):
+        return None
+    return track if track.video_id and track.title else None
 
 
 class AlarmController(QObject):
@@ -259,6 +303,9 @@ class Hearth:
         self._alarm_target = 0.8
         self._alarm_step = 0
         self.tray: HearthTray | None = None
+        # plugin shelf sources: name -> callable returning Track-shaped dicts
+        # (resolved on the job pool; the home "🔌 Plugins" shelf renders them)
+        self._plugin_shelves: dict[str, object] = {}
         # the update whisper: opt-in, first look ≥60s after boot, and
         # while UPDATE_CHECK_ENABLED is False it doesn't even schedule
         self._update_tag = ""
@@ -272,6 +319,10 @@ class Hearth:
             self.mpris.connect(self.core, summon=self._summon,
                                quit=self.qapp.quit)
             self.mpris.start()
+
+        # plugins: quiet, time-boxed, before settings so a plugin palette
+        # pack exists by the time pickers and restores go looking for it
+        self._load_plugins()
 
         self._restore_settings()
         self._wire_panel()
@@ -329,6 +380,8 @@ class Hearth:
         w.discover_enqueue_all_requested.connect(self._enqueue_all)
         w.world_station_requested.connect(self._start_world_station)
         w.style_closet_requested.connect(self._open_style_closet)
+        w.local_add_folder_requested.connect(self._local_add_folder)
+        w.local_rescan_requested.connect(self._local_rescan)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -617,6 +670,7 @@ class Hearth:
                 config.ON_REPEAT_SHELF_LIMIT, config.ON_REPEAT_HALF_LIFE_DAYS
             )
         )
+        self._refresh_plugin_shelf()   # plugin shelf sources, off the UI thread
         if not self._enable_streaming:
             return  # unit tests: no network shelves
         for query in config.QUICK_PICKS:
@@ -631,6 +685,7 @@ class Hearth:
     def _refresh_library(self) -> None:
         self.window.set_favorites(self.store.favorites()[:12])
         self.window.set_recent(self.store.history(12))
+        self.window.set_local_tracks(self.store.local_tracks())
         self.window.refresh_playlists()
 
     # --- discover: the whole world's music ---
@@ -811,6 +866,11 @@ class Hearth:
         """The player died mid-song: re-resolve a fresh URL and rejoin it."""
         if not self._enable_streaming:
             return  # test mode: keep the playback pool out of unit tests
+        local_url = self._local_file_url(track)
+        if local_url is not None:
+            # a local file never needs re-resolving — just rejoin it
+            self.core.set_stream(track, local_url, resume_ms=resume_ms)
+            return
         job = LoadJob(track)
         job.signals.finished.connect(
             lambda payload: self.core.set_stream(
@@ -832,6 +892,10 @@ class Hearth:
         if not self._enable_streaming:
             return  # test mode: keep the playback pool out of unit tests
         if track is None:
+            return
+        local_url = self._local_file_url(track)
+        if local_url is not None:
+            self.core.prime_shadow(track, local_url)
             return
         job = LoadJob(track)
         job.signals.finished.connect(
@@ -870,6 +934,13 @@ class Hearth:
         if not self._enable_streaming:
             return  # test mode: keep the playback pool out of unit tests
         self._fetch_lyrics(track)
+        local_url = self._local_file_url(track)
+        if local_url is not None:
+            # your own file: skip the network resolve entirely — QMediaPlayer
+            # opens a file:// URL directly (the smallest possible branch;
+            # set_stream itself is untouched)
+            self.core.set_stream(track, local_url)
+            return
         job = LoadJob(track)
         job.signals.finished.connect(
             lambda payload: self.core.set_stream(payload[2], payload[0], payload[1])
@@ -966,6 +1037,7 @@ class Hearth:
             "world": "Go to World Explorer",
             "search": "Go to Search",
             "library": "Go to Your Library",
+            "local": "Go to Local songs",
             "now": "Go to Now Playing",
             "stats": "Go to Stats",
         }
@@ -1004,6 +1076,159 @@ class Hearth:
         track = self.core.engine.current
         if track is not None:
             self._toggle_pin(track)
+
+    # --- plugins (v0.7.0): palette packs + shelf sources, trusted installs ---
+
+    def _plugin_services(self) -> dict:
+        """The tiny surface a plugin entry is handed.
+
+        ``register_palette(dict)`` wraps theme.register_custom_palette:
+        the dict is rebuilt into a Palette and rejected when it does not
+        validate, so a half-baked plugin cannot poison the room's colors
+        (built-in keys are never overwritten — theme suffixes collisions).
+
+        ``register_shelf_source(name, fn)`` remembers a home-shelf source;
+        hearth calls ``fn`` on a worker thread and renders the Track-shaped
+        dicts it returns on the "🔌 Plugins" shelf.
+        """
+        def register_palette(data):
+            pal = theme._palette_from_dict(data)
+            if pal is None:
+                log.info("plugin palette rejected: not a complete palette dict")
+                return None
+            return theme.register_custom_palette(pal)
+
+        def register_shelf_source(name, fn):
+            if not isinstance(name, str) or not name.strip() or not callable(fn):
+                log.info("plugin shelf source rejected (need a name + callable)")
+                return False
+            self._plugin_shelves[name.strip()] = fn
+            return True
+
+        return {
+            "register_palette": register_palette,
+            "register_shelf_source": register_shelf_source,
+        }
+
+    def _load_plugins(self) -> None:
+        """Boot-time plugin load: quiet, time-boxed, never delays startup.
+
+        Discovery does no network I/O; the whole thing is wrapped so even
+        a spectacularly broken plugins folder cannot slow the fire down
+        (the deadline caps misbehaving imports, the except caps everything
+        else).
+        """
+        try:
+            warnings: list[str] = []
+            deadline = time.monotonic() + config.PLUGIN_BOOT_TIMEOUT_S
+            results = plugins.load_all(
+                self._dir / config.PLUGINS_DIR_NAME,
+                self._plugin_services(),
+                deadline=deadline,
+                warnings=warnings,
+            )
+            for note in warnings:
+                log.info("plugin: %s", note)
+            for info, result in results:
+                if isinstance(result, Exception):
+                    log.info("plugin %s failed to load: %s", info.name, result)
+            loaded = [info.name for info, result in results
+                      if not isinstance(result, Exception)]
+            if loaded:
+                log.info("plugins loaded: %s", ", ".join(loaded))
+        except Exception:   # noqa: BLE001 - plugins must never delay the fire
+            log.info("plugin load skipped", exc_info=True)
+
+    def _refresh_plugin_shelf(self) -> None:
+        """Resolve every plugin shelf source on the pool — never the UI thread."""
+        if not self._plugin_shelves:
+            return
+        job = _PluginShelfJob(self._plugin_shelves)
+        job.signals.finished.connect(self._on_plugin_shelf)
+        self._launch(job)
+
+    def _on_plugin_shelf(self, payload) -> None:
+        """Shelf sources landed: one merged shelf; failures speak up."""
+        results, failures = payload
+        tracks: list[Track] = []
+        for _name, source_tracks in results:
+            tracks.extend(source_tracks)
+        self.window.set_home_shelf(plugins.SHELF_NAME, tracks)
+        for name, error in failures:
+            self.surface.set_status(f"🔌 {name}: shelf source failed ({error})")
+
+    # --- local library (v0.7.0): scan your own folders ---
+
+    def _local_roots(self) -> list[str]:
+        """Remembered scan roots (one per line in the settings)."""
+        raw = str(self.settings.value("local/roots", "") or "")
+        return [line for line in (l.strip() for l in raw.splitlines()) if line]
+
+    def _save_local_roots(self, roots: list[str]) -> None:
+        self.settings.setValue("local/roots", "\n".join(roots))
+
+    def _local_add_folder(self) -> None:
+        """📂 Pick a folder, remember it, scan it (dialog only in real UI)."""
+        root = QFileDialog.getExistingDirectory(
+            self.window, "Add a music folder"
+        )
+        if not root:
+            return
+        roots = self._local_roots()
+        if root not in roots:
+            roots.append(root)
+            self._save_local_roots(roots)
+        self._scan_local_roots()
+
+    def _local_rescan(self) -> None:
+        """🔄 Re-walk every remembered folder (or ask for one first)."""
+        if not self._local_roots():
+            self._local_add_folder()
+            return
+        self._scan_local_roots()
+
+    def _scan_local_roots(self) -> None:
+        """Kick a scan job: the walk runs on the pool, the upsert stays here."""
+        self.surface.set_status("Scanning local folders…")
+        job = LocalScanJob(self._local_roots())
+        job.signals.finished.connect(self._on_local_scan)
+        job.signals.failed.connect(
+            lambda msg: self.surface.set_status(f"Local scan failed: {msg}")
+        )
+        self._launch(job)
+
+    def _on_local_scan(self, payload) -> None:
+        """Scan results: one batched upsert, then refresh the view."""
+        entries, stats = payload
+        added, updated = self.store.upsert_local_tracks(entries)
+        self.window.set_local_tracks(self.store.local_tracks())
+        tail = " · list capped" if stats.get("truncated") else ""
+        self.surface.set_status(
+            f"📁 Local: {added} added · {updated} updated · "
+            f"{stats.get('scanned', 0)} scanned{tail}"
+        )
+
+    def _local_file_url(self, track: Track | None) -> str | None:
+        """A file:// URL for a local-library track, or None.
+
+        Local tracks carry video_id ``local-<path hash>``; the real path
+        lives in the store. A file that has vanished on disk returns None
+        with a status note instead of pretending anything is playable.
+        """
+        if track is None or not track.video_id.startswith("local-"):
+            return None
+        try:
+            path = self.store.local_track_path(track.video_id)
+        except Exception:   # noqa: BLE001 - store trouble must not break playback
+            return None
+        if not path:
+            return None
+        if not Path(path).is_file():
+            self.surface.set_status(f"Local file is gone: {Path(path).name}")
+            return None
+        from PyQt6.QtCore import QUrl
+
+        return QUrl.fromLocalFile(path).toString()
 
     # --- wake-up alarm (v0.8.0 controls) ---
 
