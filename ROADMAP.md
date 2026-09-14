@@ -4,7 +4,9 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-14**, right after v0.6.2 (Glass & Motion — the 2020s visual pass).
+> Last stoked: **2026-09-14**, right after v0.6.3 (Keep the Fire Burning —
+> the self-healing playback pass). Every add-on discussed with the crew now
+> has a row — nothing lives only in a chat log anymore.
 
 ---
 
@@ -53,10 +55,17 @@ network layer is *never-raises*; the UI never blocks on the world.
 5. **Discord Rich Presence** 🎮 — show the burning track on your profile
    via `pypresence` (opt-in): title, artist, elapsed time, "Listen along"
    button linking the YouTube URL Hearth already copies.
+6. **Playlist export & import** — M3U plus a full JSON backup of
+   playlists, favorites and history. Your library leaves the machine only
+   when *you* say so, and comes back in one tap.
+7. **Stats dashboard & the Wrapped story** — minutes listened, top artists
+   and tracks, month-at-a-glance — all from the same play log — plus a
+   shareable year-end "Wrapped" page with the fireplace doing the honors.
 
 **Acceptance:** history & On Repeat fully headless-tested; queue restores
 in <1 s; Rich Presence never touches the audio path and degrades silently
-when Discord is absent.
+when Discord is absent; export round-trips (export → wipe → import →
+identical library) are covered by tests.
 
 ---
 
@@ -74,9 +83,19 @@ when Discord is absent.
    preview. Your hearth, your colors.
 4. **Per-track memory** — playback rate and volume nudges remembered per
    track (podcast at 1.75×, concert film at 1.0×, automatically).
+5. **Lyrics settings & translation** — font, size and brightness controls
+   for the lyric stage, plus an optional romanization / translation line
+   beside the original text (keyless sources first).
+6. **Ctrl+K command palette** — every action reachable from one fuzzy
+   palette, keyboard-only from launch to full-volume. Power users, met.
+7. **Ambient mixer** — campfire, rain and café loops layered under the
+   music at their own volume. It's called Hearth; the fire should be audible.
+8. **Wake-up alarm** — the sleep timer's sibling: fade in a station or
+   playlist at a set time, gentle exponential ramp in reverse.
 
 **Acceptance:** overlay composites at 60 fps with zero audio interference;
-themes are pure data files (no code); everything survives the offscreen suite.
+themes are pure data files (no code); lyrics rendering changes never block
+the audio path; everything survives the offscreen suite.
 
 ---
 
@@ -93,9 +112,13 @@ themes are pure data files (no code); everything survives the offscreen suite.
 4. **Diagnostics report** — one dialog that shows which fetch leg served
    each shelf (catalogue → web → flat index), powered by `ytm_resilience`
    counters. Bug reports go from "it's broken" to "leg 2 timed out".
+5. **MPRIS + media keys** — real desktop integration: MPRIS2 on Linux,
+   SMTC on Windows — lockscreen and media-key play/pause/next work even
+   when the window is buried. The desktop finally knows Hearth is lit.
 
 **Acceptance:** fresh-machine installs verified on all three OSes; the
-update check is off by default in tests and never blocks startup.
+update check is off by default in tests and never blocks startup; MPRIS
+signals are headless-tested with a fake bus.
 
 ---
 
@@ -113,6 +136,9 @@ update check is off by default in tests and never blocks startup.
    can be added without forking.
 4. **Multi-language UI** — strings extracted, community translations
    welcome; Hindi and Spanish first.
+5. **Smart shuffle** — a shuffle that reads your play counts: artists
+   spread out, nothing repeats until the queue is spent, favorites surface
+   a little more often. Shuffle with taste.
 
 ---
 

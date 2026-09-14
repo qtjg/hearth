@@ -521,12 +521,15 @@ burning — finished tracks roll on, dead streams rejoin mid-song; the
 headline of what burns next:
 
 - 🔥 **v0.7.0 — Memory & Rituals**: listen history shelves, "On Repeat"
-  smart playlist, the Glow Mix, queue persistence, Discord Rich Presence
+  smart playlist, the Glow Mix, queue persistence, Discord Rich Presence,
+  playlist export/import, stats dashboard + a yearly Wrapped story
 - 🎭 **v0.8.0 — The Wider Stage**: desktop lyrics overlay, theater mode,
-  palette packs + theme editor, per-track speed memory
-- 📦 **v0.9.0 — Reach**: AUR / winget / brew, update whisper, diagnostics
+  palette packs + theme editor, per-track speed memory, lyrics settings &
+  translation, Ctrl+K command palette, ambient mixer, wake-up alarm
+- 📦 **v0.9.0 — Reach**: AUR / winget / brew, update whisper, diagnostics,
+  MPRIS + media keys
 - 🎪 **v1.0.0 — The Festival**: gapless playback, native backend probe,
-  plugin hooks, multi-language UI
+  plugin hooks, multi-language UI, smart shuffle
 
 ---
 
