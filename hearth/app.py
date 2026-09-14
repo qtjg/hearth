@@ -22,9 +22,10 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
-from . import config, theme, world
+from . import config, theme, world, ytm_resilience
 from .catalog import Catalog
 from .command_palette import CommandAction, CommandPalette
+from .diagnostics import gather_report
 from .hotkeys import effective_chords
 from .jobs import (
     AlbumJob,
@@ -41,13 +42,15 @@ from .jobs import (
 from .lyrics import SyncedLyrics
 from .lyrics_overlay import LyricsOverlay
 from .models import Album, Artist, Collection, Track
+from .mpris import MPRIS_AVAILABLE, MprisService
 from .panel import FloatingPanel
 from .player import PlaybackCore
 from .storage import HearthStore
 from .theme import lyrics_font
 from .toast import NowPlayingToast
 from .tray import HearthTray, InstanceGuard
-from .window import MainWindow, StylePickerDialog
+from .update_whisper import UpdateWhisper
+from .window import DiagnosticsDialog, MainWindow, StylePickerDialog
 
 log = logging.getLogger(__name__)
 
@@ -256,6 +259,19 @@ class Hearth:
         self._alarm_target = 0.8
         self._alarm_step = 0
         self.tray: HearthTray | None = None
+        # the update whisper: opt-in, first look ≥60s after boot, and
+        # while UPDATE_CHECK_ENABLED is False it doesn't even schedule
+        self._update_tag = ""
+        self.whisper = UpdateWhisper(self.settings, parent=self.qapp)
+        self.whisper.whisper.connect(self._on_update_whisper)
+        self.whisper.schedule(self.qapp)
+        # MPRIS2: the desk's media keys ride the same core the tray does
+        # (a silent no-op everywhere the guarded dbus import failed)
+        self.mpris = MprisService()
+        if config.MPRIS_ENABLED and MPRIS_AVAILABLE:
+            self.mpris.connect(self.core, summon=self._summon,
+                               quit=self.qapp.quit)
+            self.mpris.start()
 
         self._restore_settings()
         self._wire_panel()
@@ -357,7 +373,12 @@ class Hearth:
             "next": self._make_action("Next", self.core.next),
             "prev": self._make_action("Previous", self.core.previous),
             "show": self._make_action("Show Hearth", self._summon),
+            "diag": self._make_action("🩺 Diagnostics", self._show_diagnostics),
         }
+        if config.UPDATE_CHECK_ENABLED:
+            actions["update"] = self._make_action(
+                "🕯️ Newer hearth — don't whisper again", self._dismiss_update_whisper
+            )
         lyrics_act = self._make_action("🪧 Desktop lyrics", self._toggle_overlay)
         lyrics_act.setCheckable(True)
         lyrics_act.setChecked(self._overlay_on)
@@ -915,6 +936,7 @@ class Hearth:
             "search": "Go to Search",
             "library": "Go to Your Library",
             "now": "Go to Now Playing",
+            "stats": "Go to Stats",
         }
         for key in self.window.VIEWS:
             label = view_labels.get(key, f"Go to {key}")
@@ -1161,6 +1183,30 @@ class Hearth:
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
             self.surface.setVisible(not self.surface.isVisible())
 
+    # --- services: MPRIS / update whisper / diagnostics (v0.7.0 reach) ---
+
+    def _on_update_whisper(self, message: str, url: str, tag: str) -> None:
+        """A newer hearth was announced: one status line, never a modal."""
+        self._update_tag = tag
+        text = f"{message}  ·  {url}" if url else message
+        self.surface.set_status(text)
+
+    def _dismiss_update_whisper(self) -> None:
+        """The tray's 'don't whisper again' for the tag we announced."""
+        tag = self._update_tag
+        if not tag:
+            self.surface.set_status("No update whisper to silence")
+            return
+        self.whisper.dismiss(tag)
+        self.surface.set_status(f"Update whisper silenced for {tag}")
+
+    def _show_diagnostics(self) -> None:
+        """🩺 Open the health page (modeless — never blocks the room)."""
+        report = gather_report(self.store, resilience=ytm_resilience)
+        dlg = DiagnosticsDialog(report, self.window)
+        self._diag_dlg = dlg
+        dlg.show()
+
     # --- persistence ---
 
     def _restore_settings(self) -> None:
@@ -1397,6 +1443,7 @@ class Hearth:
     def shutdown(self) -> None:
         # Let in-flight jobs land while their recipients are still alive.
         QThreadPool.globalInstance().waitForDone(5000)
+        self.mpris.stop()
         self._persist()
         self.store.close()
 

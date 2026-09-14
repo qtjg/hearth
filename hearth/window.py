@@ -13,6 +13,7 @@ import math
 import random
 import time
 from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 from PyQt6.QtCore import QRectF, QSize, Qt, QTimer, pyqtSignal
@@ -1520,6 +1521,283 @@ class TheaterView(QWidget):
         return self._track
 
 
+# ----------------------------------------------------------------- stats
+
+MONTH_NAMES = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+
+def group_months(days: list[tuple[str, int]], months: int = 12,
+                 today: str | None = None) -> list[tuple[str, int]]:
+    """history_days() → the last `months` (YYYY-MM, plays) buckets, oldest first.
+
+    Pure and storage-free: the day rows are grouped client-side, months
+    the store never touched come back as quiet zeros, and `today`
+    (YYYY-MM-DD) is injectable so tests can pin the window.
+    """
+    try:
+        end = date.fromisoformat(str(today)) if today else date.today()
+    except (TypeError, ValueError):
+        end = date.today()
+    count = max(1, min(int(months), 36))
+    totals: dict[str, int] = {}
+    for key, plays in (days or []):
+        key = str(key)
+        if len(key) < 7:
+            continue
+        try:
+            totals[key[:7]] = totals.get(key[:7], 0) + int(plays)
+        except (TypeError, ValueError):
+            continue
+    buckets: list[tuple[str, int]] = []
+    year, month = end.year, end.month
+    for _ in range(count):
+        key = f"{year:04d}-{month:02d}"
+        buckets.append((key, totals.get(key, 0)))
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+    buckets.reverse()
+    return buckets
+
+
+class MonthBars(QWidget):
+    """Twelve little accent bars: plays per month, painted, no chart lib.
+
+    One widget, one paintEvent — the bar heights are derived straight
+    from the (label, count) buckets each pass; months the fire never
+    touched simply don't grow a bar.
+    """
+
+    def __init__(self, palette: Palette):
+        super().__init__()
+        self._palette = palette
+        self._months: list[tuple[str, int]] = []
+        self.setMinimumHeight(110)
+
+    def set_months(self, months: list[tuple[str, int]]) -> None:
+        self._months = list(months)[-12:]
+        self.update()
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt naming
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(self.rect().adjusted(4, 4, -4, -18))
+        peak = max((count for _key, count in self._months), default=0)
+        grad = QLinearGradient(0.0, rect.top(), 0.0, rect.bottom())
+        grad.setColorAt(0.0, QColor(self._palette.accent_soft))
+        grad.setColorAt(1.0, QColor(self._palette.accent))
+        painter.setBrush(QBrush(grad))
+        pen = painter.pen()
+        pen.setColor(QColor(self._palette.text_dim))
+        n = max(1, len(self._months))
+        slot = rect.width() / n
+        bar_w = max(2.0, slot - 6.0)
+        for index, (key, count) in enumerate(self._months):
+            if count <= 0 or peak <= 0:
+                continue
+            height = max(2.0, rect.height() * count / peak)
+            bar = QRectF(rect.left() + index * slot + 3.0,
+                         rect.bottom() - height, bar_w, height)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRoundedRect(bar, 2.4, 2.4)
+            painter.setPen(pen)
+            painter.drawText(
+                QRectF(rect.left() + index * slot, rect.bottom() + 2.0,
+                       slot, 14.0),
+                Qt.AlignmentFlag.AlignHCenter, _month_label(key),
+            )
+        painter.end()
+
+
+def _month_label(key: str) -> str:
+    """'2024-03' → 'Mar' (garbage tolerantly becomes '?')."""
+    try:
+        month = int(str(key)[5:7])
+    except (TypeError, ValueError):
+        return "?"
+    return MONTH_NAMES[month - 1] if 1 <= month <= 12 else "?"
+
+
+class StatsView(QWidget):
+    """📊 Your year at the hearth: plays, minutes, artists, months.
+
+    A pure view over HearthStore's stats — every visit calls refresh(),
+    which reads stats_summary() + history_days() and repaints. Nothing
+    here touches the network, and an empty history gets a cozy
+    invitation instead of a chart of zeroes.
+    """
+
+    track_activated = pyqtSignal(object, list)   # Track, context — top tracks
+
+    def __init__(self, palette: Palette, store: HearthStore | None = None):
+        super().__init__()
+        self._palette = palette
+        self.store = store
+        self._empty_state = True
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(24, 18, 24, 12)
+        outer.setSpacing(12)
+
+        head = QHBoxLayout()
+        hero = QLabel("📊 Your year at the hearth")
+        hero.setProperty("hero", True)
+        self._status = QLabel("every play remembered, nothing forgotten")
+        self._status.setProperty("dim", True)
+        head.addWidget(hero)
+        head.addStretch(1)
+        head.addWidget(self._status)
+        outer.addLayout(head)
+
+        # page 0: the dashboard · page 1: the no-plays invitation
+        self._pages = QStackedWidget()
+        outer.addWidget(self._pages, 1)
+        self._pages.addWidget(self._build_content())
+        self._pages.addWidget(self._build_empty_page())
+        self._pages.setCurrentIndex(1)
+
+    # --- construction bits ---
+
+    def _build_content(self) -> QWidget:
+        content = QWidget()
+        body = QVBoxLayout(content)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(12)
+
+        tiles = QHBoxLayout()
+        tiles.setSpacing(10)
+        self._tiles: dict[str, QLabel] = {}
+        for key, caption in (("plays", "plays"),
+                             ("minutes", "minutes listened"),
+                             ("uniques", "unique tracks"),
+                             ("days", "days listened")):
+            tile = QVBoxLayout()
+            tile.setSpacing(1)
+            value = QLabel("0")
+            value.setStyleSheet("font-size: 26px; font-weight: 800;")
+            cap = QLabel(caption)
+            cap.setProperty("dim", True)
+            tile.addWidget(value)
+            tile.addWidget(cap)
+            tile.addStretch(1)
+            tiles.addLayout(tile, 1)
+            self._tiles[key] = value
+        body.addLayout(tiles)
+
+        self._first_lit = QLabel("")
+        self._first_lit.setProperty("dim", True)
+        body.addWidget(self._first_lit)
+
+        middle = QHBoxLayout()
+        middle.setSpacing(18)
+        artists_col = QVBoxLayout()
+        artists_cap = QLabel("Top artists")
+        artists_cap.setProperty("shelf", True)
+        artists_col.addWidget(artists_cap)
+        self._artist_lay = QVBoxLayout()
+        self._artist_lay.setSpacing(4)
+        artists_col.addLayout(self._artist_lay)
+        artists_col.addStretch(1)
+        middle.addLayout(artists_col, 1)
+        chart_col = QVBoxLayout()
+        chart_cap = QLabel("Plays by month")
+        chart_cap.setProperty("shelf", True)
+        chart_col.addWidget(chart_cap)
+        self._months_chart = MonthBars(self._palette)
+        chart_col.addWidget(self._months_chart, 1)
+        middle.addLayout(chart_col, 1)
+        body.addLayout(middle, 1)
+
+        self._top = TrackListView(self._palette)
+        self._top.set_header("Top tracks")
+        self._top.set_visible_rows(5)
+        self._top.track_activated.connect(self.track_activated.emit)
+        body.addWidget(self._top)
+        return content
+
+    def _build_empty_page(self) -> QWidget:
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.addStretch(1)
+        self._empty = QLabel("no plays yet — light the fire")
+        self._empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty.setStyleSheet("font-size: 22px;")
+        lay.addWidget(self._empty)
+        hint = QLabel("play something and your year will gather here")
+        hint.setProperty("dim", True)
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(hint)
+        lay.addStretch(1)
+        return page
+
+    # --- data in ---
+
+    def refresh(self) -> None:
+        """Re-read the store and repaint every number (cheap: one page)."""
+        if self.store is None:
+            self._empty_state = True
+            self._pages.setCurrentIndex(1)
+            return
+        try:
+            summary = self.store.stats_summary(top=config.STATS_TOP_LIMIT)
+            days = self.store.history_days()
+        except Exception:  # noqa: BLE001 - a grumpy store shows the invitation
+            self._empty_state = True
+            self._pages.setCurrentIndex(1)
+            return
+        total = int(summary.get("total_plays") or 0)
+        self._empty_state = total == 0
+        self._pages.setCurrentIndex(1 if total == 0 else 0)
+        if total == 0:
+            return
+        self._tiles["plays"].setText(str(total))
+        self._tiles["minutes"].setText(str(int(summary.get("est_minutes") or 0)))
+        self._tiles["uniques"].setText(str(int(summary.get("unique_tracks") or 0)))
+        self._tiles["days"].setText(str(int(summary.get("days_listened") or 0)))
+        first = str(summary.get("first_play") or "")
+        self._first_lit.setText(
+            f"🕯️ First lit {first[:10]}" if first else "")
+        self._set_artists(list(summary.get("top_artists") or []))
+        self._top.set_tracks(list(summary.get("top_tracks") or []))
+        self._months_chart.set_months(group_months(days))
+
+    def _set_artists(self, rows: list[tuple[str, int]]) -> None:
+        """The top-artists list: name on the left, play count on the right."""
+        while self._artist_lay.count():
+            item = self._artist_lay.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+        for artist, plays in rows[: config.STATS_TOP_LIMIT]:
+            holder = QWidget()
+            row = QHBoxLayout(holder)
+            row.setContentsMargins(0, 0, 0, 0)
+            name = QLabel(str(artist) or "Unknown artist")
+            count = QLabel("1 play" if plays == 1 else f"{plays} plays")
+            count.setProperty("dim", True)
+            row.addWidget(name, 1)
+            row.addWidget(count)
+            self._artist_lay.addWidget(holder)
+        if not rows:
+            note = QLabel("no artists yet")
+            note.setProperty("dim", True)
+            self._artist_lay.addWidget(note)
+
+    def apply_palette(self, palette: Palette) -> None:
+        self._palette = palette
+        self._months_chart.apply_palette(palette)
+
+    @property
+    def empty_state(self) -> bool:
+        """True when the last refresh found no plays at all."""
+        return self._empty_state
+
+
 # ----------------------------------------------------------------- visualizer
 
 class VisualizerModel:
@@ -2104,6 +2382,43 @@ class StylePickerDialog(QDialog):
             self.background_picked.emit(path)
 
 
+class DiagnosticsDialog(QDialog):
+    """🩺 The health page: the diagnostics report, read-only, copyable.
+
+    A modest modeless dialog — the report arrives as a ready-made
+    string from hearth.diagnostics, this shell just paints it in a
+    monospace pane and hands the listener a clipboard button.
+    """
+
+    def __init__(self, report: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("🩺 Hearth diagnostics")
+        self.setMinimumSize(560, 460)
+        lay = QVBoxLayout(self)
+        self._text = QPlainTextEdit()
+        self._text.setReadOnly(True)
+        self._text.setPlainText(report)
+        mono = QFont("Consolas")
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        mono.setPointSize(10)
+        self._text.setFont(mono)
+        lay.addWidget(self._text, 1)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        copy_btn = QPushButton("📋 Copy")
+        copy_btn.setProperty("accent", True)
+        copy_btn.setToolTip("Copy the whole report to the clipboard")
+        copy_btn.clicked.connect(self._copy)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(self.accept)
+        row.addWidget(copy_btn)
+        row.addWidget(close_btn)
+        lay.addLayout(row)
+
+    def _copy(self) -> None:
+        QApplication.clipboard().setText(self._text.toPlainText())
+
+
 class MainWindow(QMainWindow):
     """Hearth, grown up: navigation, shelves, lists, and a real transport."""
 
@@ -2142,7 +2457,8 @@ class MainWindow(QMainWindow):
     volume_changed = pyqtSignal(float)
     seek_requested = pyqtSignal(int)
 
-    VIEWS = ("home", "discover", "world", "search", "library", "now")
+    VIEWS = ("home", "discover", "world", "search", "library", "now",
+             "stats")
 
     def __init__(self, palette_key: str | None = None,
                  store: HearthStore | None = None):
@@ -2162,10 +2478,12 @@ class MainWindow(QMainWindow):
         self.remote_playlist_view = RemotePlaylistView(self._palette)
         self.artist_view = ArtistView(self._palette)
         self.theater_view = TheaterView(self._palette)   # full-screen stage
+        self.stats_view = StatsView(self._palette, store=store)  # memory page
 
         self.stack = QStackedWidget()
         for view in (self.home_view, self.discover_view, self.world_view,
                      self.search_view, self.library_view, self.now_view,
+                     self.stats_view,
                      self.album_view, self.remote_playlist_view,
                      self.artist_view):
             self.stack.addWidget(view)
@@ -2223,7 +2541,8 @@ class MainWindow(QMainWindow):
         for key, label in (("home", "🏠 Home"), ("discover", "🧭 Discover"),
                            ("world", "🗺️ World"), ("search", "🔍 Search"),
                            ("library", "📚 Your Library"),
-                           ("now", "🎧 Now Playing")):
+                           ("now", "🎧 Now Playing"),
+                           ("stats", "📊 Stats")):
             btn = QPushButton(label)
             btn.setProperty("nav", True)
             btn.setCheckable(True)
@@ -2364,6 +2683,9 @@ class MainWindow(QMainWindow):
         )
         self.library_view.playlist_opened.connect(self.open_playlist)
         self.library_view.create_playlist_requested.connect(self._new_playlist_dialog)
+        self.stats_view.track_activated.connect(
+            lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
+        )
         for view in (self.search_view, self.library_view._recent):
             view.menu_requested.connect(self._track_menu)
         self.player_bar.play_pause_requested.connect(self.play_pause_requested.emit)
@@ -2418,6 +2740,8 @@ class MainWindow(QMainWindow):
             self.discover_refresh_requested.emit()
         elif name == "search":
             self.search_view._box.setFocus()
+        elif name == "stats":
+            self.stats_view.refresh()
 
     def focus_search(self) -> None:
         self.show_view("search")
@@ -2854,6 +3178,7 @@ class MainWindow(QMainWindow):
         self.now_view.apply_palette(palette)
         self.player_bar.apply_palette(palette)
         self.theater_view.apply_palette(palette)
+        self.stats_view.apply_palette(palette)
         self.setStyleSheet(build_stylesheet(palette))
 
     # --- wallpaper engine (v0.8.0 style closet) ---
