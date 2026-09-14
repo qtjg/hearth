@@ -75,6 +75,12 @@ SEEK_STEP_MS = 10_000        # ←/→ keyboard seek step
 VOLUME_STEP = 0.05           # ↑/↓ keyboard volume step
 TOP_TRACKS_LIMIT = 8         # home shelf ranking size
 
+# --- v0.7.0: memory & rituals ---
+ON_REPEAT_SHELF_LIMIT = 12        # home shelf size for the On Repeat row
+ON_REPEAT_HALF_LIFE_DAYS = 7.0    # decay: last week beats last year
+SESSION_MAX_HISTORY = 50          # snapshot keeps the newest 50 played
+SESSION_MAX_UPCOMING = 200        # snapshot keeps at most this many upcoming
+
 # --- v0.6.0: discover (the whole world's music) ---
 DISCOVER_PLAYLIST_LIMIT = 300   # max tracks pulled per curated playlist page
 DISCOVER_CARD_SIZE = 150        # square thumbnail size of discover shelf cards
@@ -86,7 +92,31 @@ LRCLIB_TIMEOUT = 10                      # seconds per lyrics request
 ARTIST_AVATAR = 132                      # artist page avatar size
 ARTIST_CARD_SIZE = 132                   # release card size on the artist page
 
-VERSION = "0.6.2"
+# --- v0.7.0: memory & rituals ---
+ON_REPEAT_LIMIT = 25           # auto top-N computed from decayed play counts
+ON_REPEAT_DECAY_DAYS = 14.0    # recency weight: last week beats last year
+HISTORY_PAGE_SIZE = 100        # rows per day-jump page in the history view
+QUEUE_SAVE_DEBOUNCE_MS = 1500  # coalesce queue-persistence writes
+STATS_TOP_LIMIT = 10           # rows per top-artist / top-track stat card
+GLOW_MIX_SIZE = 30             # tracks pulled into a one-tap Glow Mix
+
+# --- opt-in bridges & services (guarded imports, silent when absent) ---
+DISCORD_RPC_ENABLED = False    # Discord Rich Presence via pypresence (opt-in)
+MPRIS_ENABLED = True           # MPRIS2 dbus service (Linux only, guarded)
+UPDATE_CHECK_ENABLED = False   # "a newer hearth is lit" whisper (opt-in)
+UPDATE_CHECK_INTERVAL_H = 12   # hours between release checks
+
+# --- v0.8.0: the wider stage ---
+LYRICS_OVERLAY_ENABLED = False  # frameless always-on-top lyric strip (opt-in)
+THEATER_ENABLED = True          # full-screen Now Playing mode
+VISUALIZER_BARS = 24            # mini-visualizer bar count in the player bar
+ALARM_DEFAULT_MINUTES = 30      # wake-up alarm default lead time
+
+# --- v1.0.0 groundwork ---
+CROSSFADE_ENABLED = False       # opt-in dual-player crossfade
+CROSSFADE_MAX_MS = 3000         # upper bound of the crossfade slider
+
+VERSION = "0.6.3"
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

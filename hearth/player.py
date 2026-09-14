@@ -132,6 +132,11 @@ class PlaybackCore(QObject):
         self._error_streak = 0
         self._recover_armed = True   # one error-skip per track that actually played
 
+        # --- restored-session state (queue persistence, v0.7.0) ---
+        self._resume_pending: Track | None = None   # waiting for the first play
+        self._resume_ms = 0                         # where the song was left
+        self._armed_resume_ms = 0                   # consumed by the next set_stream
+
         self._poll = QTimer(self)
         self._poll.setInterval(config.SEEK_POLL_MS)
         self._poll.timeout.connect(self._emit_position)
@@ -163,12 +168,16 @@ class PlaybackCore(QObject):
     def play_track(self, track: Track) -> None:
         """Mark a track current; the app resolves its stream, then calls set_stream()."""
         self._error_streak = 0   # user-driven movement: fresh faith in the backend
+        self._resume_pending = None
+        self._resume_ms = 0
         self.engine.play_now(track)
         self.track_changed.emit(track)
         self.queue_changed.emit()
 
     def start_queue(self, tracks: list[Track], start: int = 0) -> None:
         self._error_streak = 0
+        self._resume_pending = None
+        self._resume_ms = 0
         first = self.engine.start_queue(tracks, start)
         self.queue_changed.emit()
         if first is not None:
@@ -178,7 +187,37 @@ class PlaybackCore(QObject):
         self.engine.enqueue(track)
         self.queue_changed.emit()
 
+    def restore_queue(
+        self,
+        current: Track | None,
+        history: list[Track] | None = None,
+        upcoming: list[Track] | None = None,
+        resume_ms: int = 0,
+    ) -> None:
+        """Rebuild the last session's queue without making a sound.
+
+        The queue comes back exactly as it was left. No track_changed is
+        emitted, so nothing resolves, nothing plays — pressing play
+        resumes the current track at `resume_ms` instead of starting cold.
+        """
+        self.engine.clear()
+        self.engine.history = list(history or [])
+        self.engine.current = current
+        self.engine.upcoming = list(upcoming or [])
+        self._resume_pending = current
+        self._resume_ms = max(0, int(resume_ms))
+        self.queue_changed.emit()
+
     def toggle(self) -> None:
+        if self._resume_pending is not None:
+            # A restored session waiting for its first play: resolve the
+            # stream and let set_stream() rejoin at the saved position.
+            track = self._resume_pending
+            self._armed_resume_ms = self._resume_ms
+            self._resume_pending = None
+            self._resume_ms = 0
+            self.track_changed.emit(track)
+            return
         if not self._ensure_backend():
             return
         from PyQt6.QtMultimedia import QMediaPlayer
@@ -264,6 +303,31 @@ class PlaybackCore(QObject):
     def rate(self) -> float:
         return self._rate
 
+    @property
+    def position_ms(self) -> int:
+        """Best-known position: the live backend if present, else observed."""
+        if self._player is not None:
+            try:
+                return int(self._player.position())
+            except (RuntimeError, AttributeError):
+                pass
+        return self._last_pos_ms
+
+    @property
+    def session_position_ms(self) -> int:
+        """Where a restored session would resume; the live position otherwise."""
+        if self._resume_pending is not None:
+            return self._resume_ms
+        return self.position_ms
+
+    def _effective_resume(self, resume_ms: int) -> int:
+        """Explicit resume wins; else a restored-session resume, once."""
+        explicit = max(0, int(resume_ms))
+        if explicit:
+            return explicit
+        armed, self._armed_resume_ms = self._armed_resume_ms, 0
+        return max(0, int(armed))
+
     def seek(self, position_ms: int) -> None:
         if self._player is not None:
             self._player.setPosition(int(position_ms))
@@ -342,7 +406,8 @@ class PlaybackCore(QObject):
         self.apply_normalization(loudness_db)
         from PyQt6.QtCore import QUrl
 
-        rejoin = max(0, int(resume_ms) - config.STREAM_RESUME_BACKSTEP_MS) if resume_ms else 0
+        rejoin_ms = self._effective_resume(resume_ms)
+        rejoin = max(0, rejoin_ms - config.STREAM_RESUME_BACKSTEP_MS) if rejoin_ms else 0
         self._player.setSource(QUrl(url))
         self._player.setPlaybackRate(self._rate)
         self._player.play()

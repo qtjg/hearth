@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import time
 from pathlib import Path
 
 from .models import Track
@@ -76,11 +77,18 @@ class HearthStore:
 
     # --- history ---
 
-    def log_play(self, track: Track) -> None:
-        self._db.execute(
-            "INSERT INTO history (video_id, payload) VALUES (?, ?)",
-            (track.video_id, track.to_json()),
-        )
+    def log_play(self, track: Track, played_at: float | None = None) -> None:
+        """Record a play; `played_at` backfills an older moment (tests, imports)."""
+        if played_at is None:
+            self._db.execute(
+                "INSERT INTO history (video_id, payload) VALUES (?, ?)",
+                (track.video_id, track.to_json()),
+            )
+        else:
+            self._db.execute(
+                "INSERT INTO history (video_id, payload, played_at) VALUES (?, ?, ?)",
+                (track.video_id, track.to_json(), float(played_at)),
+            )
         self._db.commit()
 
     def history(self, limit: int = 100) -> list[Track]:
@@ -107,6 +115,93 @@ class HearthStore:
         )
         self._db.commit()
         return cur.rowcount
+
+    # --- memory & rituals (v0.7.0) ---
+
+    def on_repeat(
+        self, limit: int = 25, half_life_days: float = 7.0
+    ) -> list[Track]:
+        """The decayed most-played list: last week beats last year.
+
+        Every play scores `0.5 ** (age / half_life)` — a track played all
+        week outranks one you binged last spring. Ties break by video_id
+        so the shelf is stable across refreshes.
+        """
+        rows = self._db.execute(
+            "SELECT video_id, payload, played_at FROM history"
+        ).fetchall()
+        if not rows:
+            return []
+        half_life = max(0.5, float(half_life_days)) * 86400.0
+        now = time.time()
+        scores: dict[str, float] = {}
+        payloads: dict[str, str] = {}
+        for video_id, payload, played_at in rows:
+            age = max(0.0, now - float(played_at))
+            scores[video_id] = scores.get(video_id, 0.0) + 0.5 ** (age / half_life)
+            payloads[video_id] = payload
+        ranked = sorted(scores, key=lambda vid: (-scores[vid], vid))
+        out: list[Track] = []
+        for video_id in ranked[: max(0, int(limit))]:
+            try:
+                out.append(Track.from_json(payloads[video_id]))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    def history_page(
+        self, days: int | None = None, limit: int = 2000
+    ) -> list[tuple[str, list[Track]]]:
+        """History grouped by calendar day, newest first — the day-jump page.
+
+        Returns [(day_iso, [Track]), …]; within a day, newest plays come
+        first. `days` bounds how far back the page reaches.
+        """
+        query = "SELECT payload, played_at FROM history"
+        params: list = []
+        if days is not None and days > 0:
+            query += " WHERE played_at >= ?"
+            params.append(time.time() - days * 86400.0)
+        query += " ORDER BY id DESC LIMIT ?"
+        params.append(max(1, int(limit)))
+        rows = self._db.execute(query, tuple(params)).fetchall()
+        groups: list[tuple[str, list[Track]]] = []
+        index: dict[str, int] = {}
+        for payload, played_at in rows:
+            try:
+                track = Track.from_json(payload)
+            except (TypeError, ValueError):
+                continue
+            day = time.strftime("%Y-%m-%d", time.localtime(float(played_at)))
+            if day not in index:
+                index[day] = len(groups)
+                groups.append((day, []))
+            groups[index[day]][1].append(track)
+        return groups
+
+    def listening_stats(self) -> dict:
+        """A quick shape of your listening: plays, uniques, top artist, days."""
+        rows = self._db.execute("SELECT payload, played_at FROM history").fetchall()
+        uniques: set[str] = set()
+        artists: dict[str, int] = {}
+        days: set[str] = set()
+        for payload, played_at in rows:
+            try:
+                track = Track.from_json(payload)
+            except (TypeError, ValueError):
+                continue
+            uniques.add(track.video_id)
+            if track.artist:
+                artists[track.artist] = artists.get(track.artist, 0) + 1
+            days.add(time.strftime("%Y-%m-%d", time.localtime(float(played_at))))
+        top_artist = max(artists, key=lambda a: (artists[a], a)) if artists else ""
+        return {
+            "total_plays": len(rows),
+            "unique_tracks": len(uniques),
+            "top_artist": top_artist,
+            "top_artist_plays": artists.get(top_artist, 0),
+            "days_listened": len(days),
+        }
 
     # --- playlists ---
 

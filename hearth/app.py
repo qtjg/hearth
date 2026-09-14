@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 from logging.handlers import RotatingFileHandler
@@ -100,6 +101,7 @@ class Hearth:
             if settings_path else QSettings(config.ORG_NAME, config.APP_NAME)
         )
         self.store = HearthStore(self._dir / "hearth.db")
+        self._snapshot_path = self._dir / "session.json"
         self.catalog = Catalog()
         # video_id -> (plain_text | None, LrcLine list | None)
         self._lyrics_cache: dict[str, tuple[str | None, list | None]] = {}
@@ -201,6 +203,7 @@ class Hearth:
         self.core.duration_changed.connect(self.window.set_duration)
         self.core.status.connect(self.panel.set_status)
         self.core.queue_changed.connect(self._on_queue_changed)
+        self.core.queue_changed.connect(self._save_session_snapshot)
         self.core.repeat_changed.connect(lambda m: self._persist())
         self.core.rate_changed.connect(lambda r: self._persist())
         self.core.queue_dry.connect(self._on_queue_dry)
@@ -427,6 +430,11 @@ class Hearth:
         self.window.set_recent(self.store.history(12))
         self.window.set_favorites(self.store.favorites()[:12])
         self.window.set_top_tracks(self.store.top_tracks(config.TOP_TRACKS_LIMIT))
+        self.window.set_on_repeat(
+            self.store.on_repeat(
+                config.ON_REPEAT_SHELF_LIMIT, config.ON_REPEAT_HALF_LIFE_DAYS
+            )
+        )
         if not self._enable_streaming:
             return  # unit tests: no network shelves
         for query in config.QUICK_PICKS:
@@ -829,6 +837,9 @@ class Hearth:
             self.surface.set_status(f"{len(favorites)} favorites pinned")
         self._refresh_home()
         self._refresh_library()
+        data = self._load_session_snapshot()
+        if data is not None:
+            self._apply_session_snapshot(data)
 
     def _persist(self) -> None:
         self.settings.setValue("volume", self.core.volume)
@@ -839,6 +850,83 @@ class Hearth:
         self.settings.setValue("geometry/pos", self.panel.pos())
         self.settings.setValue("window/size", self.window.size())
         self.settings.setValue("window/pos", self.window.pos())
+        self._save_session_snapshot()
+
+    # --- session snapshot: the queue survives a restart (v0.7.0) ---
+
+    def _session_snapshot(self) -> dict:
+        """The current queue + transport state as one portable dict."""
+        engine = self.core.engine
+        return {
+            "format": "hearth-session",
+            "version": 1,
+            "current": engine.current.to_dict() if engine.current else None,
+            "history": [
+                t.to_dict() for t in engine.history[-config.SESSION_MAX_HISTORY:]
+            ],
+            "upcoming": [
+                t.to_dict() for t in engine.upcoming[: config.SESSION_MAX_UPCOMING]
+            ],
+            "position_ms": self.core.session_position_ms if engine.current else 0,
+            "volume": self.core.volume,
+            "rate": self.core.rate,
+            "repeat": engine.repeat,
+        }
+
+    def _save_session_snapshot(self, *_args) -> None:
+        """Write the snapshot (never raises — a dead snapshot is no tragedy)."""
+        try:
+            payload = json.dumps(self._session_snapshot(), ensure_ascii=False)
+            self._snapshot_path.write_text(payload, encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            log.debug("session snapshot skipped", exc_info=True)
+
+    def _load_session_snapshot(self) -> dict | None:
+        try:
+            data = json.loads(self._snapshot_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if not isinstance(data, dict) or data.get("format") != "hearth-session":
+            return None
+        return data
+
+    def _apply_session_snapshot(self, data: dict) -> bool:
+        """Rebuild queue + display from a snapshot. True when restored."""
+
+        def _track(entry) -> Track | None:
+            if not isinstance(entry, dict):
+                return None
+            try:
+                track = Track.from_dict(entry)
+            except (TypeError, ValueError):
+                return None
+            return track if track.video_id and track.title else None
+
+        current = _track(data.get("current"))
+        history = [t for t in (_track(e) for e in data.get("history") or []) if t]
+        upcoming = [t for t in (_track(e) for e in data.get("upcoming") or []) if t]
+        if current is None and not upcoming:
+            return False
+        self.core.restore_queue(
+            current, history, upcoming,
+            resume_ms=int(data.get("position_ms") or 0),
+        )
+        volume = data.get("volume")
+        if isinstance(volume, (int, float)):
+            self.core.set_volume(float(volume))
+        rate = data.get("rate")
+        if isinstance(rate, (int, float)) and rate > 0:
+            self.core.set_rate(float(rate))
+        repeat = data.get("repeat")
+        if repeat in config.REPEAT_MODES:
+            self.core.set_repeat(repeat)
+        if current is not None:
+            self.panel.set_track(current)
+            self.window.set_track(current)
+            self.window.set_pinned(self.store.is_pinned(current.video_id))
+            self.surface.set_status("Session restored — press play to continue")
+        self._on_queue_changed()
+        return True
 
     def shutdown(self) -> None:
         # Let in-flight jobs land while their recipients are still alive.

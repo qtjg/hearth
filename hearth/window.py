@@ -169,7 +169,7 @@ class Shelf(QWidget):
 # ----------------------------------------------------------------- views
 
 class HomeView(QWidget):
-    """Scrolling shelves: quick picks, pinned favorites, recently played."""
+    """Scrolling shelves: quick picks, on repeat, pinned favorites, recent."""
 
     def __init__(self, palette: Palette):
         super().__init__()
@@ -185,7 +185,10 @@ class HomeView(QWidget):
         area.setWidget(body)
         outer.addWidget(area)
         self._shelves: dict[str, Shelf] = {}
-        for name in ("Quick picks", "Top tracks", "Pinned favorites", "Recently played"):
+        for name in (
+            "Quick picks", "Top tracks", "On Repeat", "Pinned favorites",
+            "Recently played",
+        ):
             self._shelves[name] = Shelf(palette, name)
             self._body_lay.addWidget(self._shelves[name])
             self._shelves[name].setVisible(False)
@@ -1809,6 +1812,9 @@ class MainWindow(QMainWindow):
     def set_recent(self, tracks: list[Track]) -> None:
         self.library_view.set_recent(tracks)
         self.home_view.set_shelf("Recently played", tracks)
+
+    def set_on_repeat(self, tracks: list[Track]) -> None:
+        self.home_view.set_shelf("On Repeat", tracks)
 
     # --- playlists ---
 
