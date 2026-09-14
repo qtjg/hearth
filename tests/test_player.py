@@ -156,3 +156,78 @@ def test_track_changed_signal(core):
     core.play_track(make_track())
     assert len(seen) == 1
     assert core.engine.current.video_id == "dQw4w9WgXcQ"
+
+
+# --- end-of-media & error recovery (v0.2.0 dropped the v0.1.0 relay,
+#     so finished tracks went silent instead of rolling on) ---
+
+
+def test_end_of_media_rolls_into_next(core):
+    seen = []
+    core.track_changed.connect(seen.append)
+    core.start_queue(tracks(2), start=0)
+    core._on_end_of_media()
+    assert core.engine.current.video_id == "t1"
+    assert seen[-1].video_id == "t1"
+
+
+def test_end_of_media_repeat_one_sticks(core):
+    seen = []
+    core.track_changed.connect(seen.append)
+    core.set_repeat(config.REPEAT_ONE)
+    core.start_queue(tracks(2), start=0)
+    core._on_end_of_media()
+    assert core.engine.current.video_id == "t0"
+    assert seen[-1].video_id == "t0"
+    assert core.engine.upcoming[0].video_id == "t1"
+
+
+def test_end_of_media_repeat_all_wraps(core):
+    core.set_repeat(config.REPEAT_ALL)
+    core.start_queue(tracks(2), start=0)
+    core._on_end_of_media()   # t0 -> t1
+    core._on_end_of_media()   # queue dry, repeat-all wraps -> t0
+    assert core.engine.current.video_id == "t0"
+
+
+def test_end_of_media_queue_finished_stops(core):
+    seen = []
+    core.state_changed.connect(seen.append)
+    core.set_autoplay(False)
+    core.start_queue(tracks(1), start=0)
+    core._on_end_of_media()
+    assert core.engine.current is None
+    assert seen[-1] is False
+
+
+def test_end_of_media_autoplay_asks_for_radio_refill(core):
+    dried = []
+    core.queue_dry.connect(dried.append)
+    core.set_autoplay(True)
+    core.start_queue(tracks(1), start=0)
+    core._on_end_of_media()
+    assert dried and dried[0].video_id == "t0"
+
+
+def test_player_error_skips_to_next_track(core):
+    core.start_queue(tracks(2), start=0)
+    core._on_error(0, "stream died")
+    assert core.engine.current.video_id == "t1"
+
+
+def test_player_error_duplicate_ignored_until_audio_plays(core):
+    core.start_queue(tracks(3), start=0)
+    core._on_error(0, "boom")         # skip t0 -> t1
+    core._on_error(0, "boom again")   # duplicate before any audio: ignored
+    assert core.engine.current.video_id == "t1"
+    core._note_playing(True)          # t1 actually starts
+    core._on_error(0, "boom")         # now a fresh failure may skip again
+    assert core.engine.current.video_id == "t2"
+
+
+def test_error_streak_gives_up(core):
+    core.start_queue(tracks(9), start=0)
+    for _ in range(core.MAX_ERROR_SKIPS + 1):
+        core._note_playing(True)      # each track starts...
+        core._on_error(0, "dead")     # ...then dies mid-play
+    assert core.engine.current.video_id == f"t{core.MAX_ERROR_SKIPS}"

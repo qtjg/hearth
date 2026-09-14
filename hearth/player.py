@@ -95,6 +95,8 @@ class PlaybackCore(QObject):
     resolved, call set_stream() to load and play.
     """
 
+    MAX_ERROR_SKIPS = 3   # mid-play deaths in a row before we give up
+
     track_changed = pyqtSignal(object)          # Track | None
     state_changed = pyqtSignal(bool)            # playing
     position_changed = pyqtSignal(int)          # ms
@@ -103,6 +105,7 @@ class PlaybackCore(QObject):
     repeat_changed = pyqtSignal(str)
     rate_changed = pyqtSignal(float)
     queue_dry = pyqtSignal(object)                # last track before the queue ran dry
+    stream_lost = pyqtSignal(object, int)         # (track, resume_ms) — mid-song death
     status = pyqtSignal(str)
 
     def __init__(self, parent: QObject | None = None):
@@ -117,6 +120,17 @@ class PlaybackCore(QObject):
         self._fade_timer: QTimer | None = None
         self._fade_step = 0
         self._pre_fade_volume = self._volume
+
+        # --- stream self-healing state (see config STREAM_*) ---
+        self._playing = False            # mirrors the backend, minus the Qt enum
+        self._last_pos_ms = 0            # last position we actually observed
+        self._stream_anchor_ms = 0       # position this stream was joined at
+        self._stall_polls = 0            # consecutive polls with a frozen position
+        self._retries = 0                # rejoin attempts spent on the current track
+        self._recovered_id: str | None = None   # which track the budget belongs to
+        self._end_of_media = None        # Qt enum, resolved with the backend
+        self._error_streak = 0
+        self._recover_armed = True   # one error-skip per track that actually played
 
         self._poll = QTimer(self)
         self._poll.setInterval(config.SEEK_POLL_MS)
@@ -134,9 +148,8 @@ class PlaybackCore(QObject):
             self._audio_out.setVolume(self._volume)
             self._player = QMediaPlayer(self)
             self._player.setAudioOutput(self._audio_out)
-            self._player.playbackStateChanged.connect(
-                lambda s: self.state_changed.emit(s == QMediaPlayer.PlaybackState.PlayingState)
-            )
+            self._player.playbackStateChanged.connect(self._on_playback_state)
+            self._player.mediaStatusChanged.connect(self._on_media_status)
             self._player.errorOccurred.connect(self._on_error)
             self._player.durationChanged.connect(self.duration_changed.emit)
             return True
@@ -149,11 +162,13 @@ class PlaybackCore(QObject):
 
     def play_track(self, track: Track) -> None:
         """Mark a track current; the app resolves its stream, then calls set_stream()."""
+        self._error_streak = 0   # user-driven movement: fresh faith in the backend
         self.engine.play_now(track)
         self.track_changed.emit(track)
         self.queue_changed.emit()
 
     def start_queue(self, tracks: list[Track], start: int = 0) -> None:
+        self._error_streak = 0
         first = self.engine.start_queue(tracks, start)
         self.queue_changed.emit()
         if first is not None:
@@ -191,6 +206,7 @@ class PlaybackCore(QObject):
         self.track_changed.emit(track)
 
     def previous(self) -> None:
+        self._error_streak = 0
         track = self.engine.go_back()
         self.queue_changed.emit()
         if track is not None:
@@ -318,10 +334,52 @@ class PlaybackCore(QObject):
         self._poll.start()
         self.state_changed.emit(True)
 
+    def _on_playback_state(self, state) -> None:
+        from PyQt6.QtMultimedia import QMediaPlayer
+
+        self._note_playing(state == QMediaPlayer.PlaybackState.PlayingState)
+
+    def _note_playing(self, playing: bool) -> None:
+        if playing:
+            self._recover_armed = True   # audio actually flowed — re-arm the skip guard
+        self.state_changed.emit(playing)
+
+    def _on_media_status(self, status) -> None:
+        from PyQt6.QtMultimedia import QMediaPlayer
+
+        if status != QMediaPlayer.MediaStatus.EndOfMedia:
+            return
+        self._on_end_of_media()
+
+    def _on_end_of_media(self) -> None:
+        """Track finished naturally — roll straight into the next one.
+
+        The v0.2.0 rewrite of the audio core dropped the v0.1.0
+        EndOfMedia relay: tracks ended and playback went silent instead
+        of advancing. This restores it (repeat modes and autoplay are
+        already handled by next() and the queue_dry -> radio refill
+        chain in the app layer).
+        """
+        log.debug("track finished — rolling into the next one")
+        self._error_streak = 0   # a natural finish proves the pipeline is healthy
+        self.next()
+
     def _on_error(self, err, err_str: str) -> None:
         log.warning("player error: %s", err_str)
         self.status.emit(f"Playback error: {err_str}")
         self.state_changed.emit(False)
+        current = self.engine.current
+        if current is None or not self._recover_armed:
+            return  # nothing to recover, or we already skipped without hearing audio
+        self._recover_armed = False
+        self._error_streak += 1
+        if self._error_streak > self.MAX_ERROR_SKIPS:
+            self.stop()
+            self.status.emit("Playback stopped — too many errors in a row")
+            return
+        log.warning("recovering from player error — skipping %s", current.title)
+        self.status.emit("Skipping past the bad stream…")
+        self.next()
 
     def _emit_position(self) -> None:
         if self._player is not None:
