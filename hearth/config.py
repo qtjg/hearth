@@ -139,6 +139,11 @@ ALARM_FADE_MS = 20_000           # wake-up fade-in window (silence → pre-alarm
 ALARM_FADE_STEPS = 10            # steps inside that window
 VISUALIZER_TICK_MS = 60          # mini-visualizer animation frame
 
+# --- v0.7.1: ember tending (completers for the Big Burn rows) ---
+SMART_SHUFFLE_WEIGHT_GAIN = 0.35    # hot tracks' wait stretches up to 35%
+SMART_SHUFFLE_WEIGHTS_LIMIT = 200   # On Repeat scores pulled into a shuffle
+WRAPPED_TOP_LIMIT = 5               # rows per top-artist / top-track Wrapped card
+
 # --- v0.7.0: plugins + the local library (your own files by the fire) ---
 PLUGINS_DIR_NAME = "plugins"     # folder under the app data dir holding plugins
 PLUGIN_BOOT_TIMEOUT_S = 10.0     # boot plugin load is time-boxed, never delays
@@ -163,7 +168,7 @@ GLOW_MIX_ARTISTS = 3            # top rotation artists whose kindred tracks feed
 GLOW_MIX_ROTATION_SHARE = 0.6   # ~60% of the blend comes from your rotation
 HISTORY_CHIP_DAYS = 14          # day-jump chips shown on the history page
 
-VERSION = "0.7.0"
+VERSION = "0.7.2"
 
 REPEAT_OFF = "off"
 REPEAT_ALL = "all"

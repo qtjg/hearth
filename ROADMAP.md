@@ -4,7 +4,7 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-18** (v0.7.1 patch shipped; v0.8.0 "The Long Winter Nights"
+> Last stoked: **2026-09-18** (v0.7.2 shipped; v0.8.0 "The Long Winter Nights"
 > charted). Earlier, by crew decision, every wave was folded into
 > **one main version** — all four themes, one fire, built in order. Every
 > add-on discussed with the crew has a row here; nothing lives only in a
@@ -24,9 +24,10 @@
 | v0.6.3 | Keep the Fire Burning | self-healing playback: EndOfMedia relay, mid-song rejoin, stall watchdog, guarded error-skip |
 | v0.7.0 | The Big Burn | memory & rituals (On Repeat, day history, Glow Mix, queue persistence, stats, export/import), the wider stage (lyrics overlay, theater, style closet, Ctrl+K, smart shuffle, wake-up alarm), reach (MPRIS, update whisper, diagnostics, AUR/winget/brew drafts), the festival (crossfade, plugin hooks, local library, ambient mixer, i18n scaffold, Discord RPC) |
 | v0.7.1 | Smarts & reach | smart shelves (Most played, Recently loved, Rare gems), Rewind story, phone remote (LAN web remote) |
+| v0.7.2 | Ember tending | the completers: ☕ café ambience, per-track volume nudges, play-count-weighted smart shuffle, per-leg fetch counters in diagnostics, the shareable Rewind card (📋 copy + 🖼 save-PNG) |
 | v0.8.0 | The Long Winter Nights *(charted)* | the Sound Forge (EQ, loudness, karaoke, gapless), the Memory Palace (Rewind, rules, scrobbles, lyrics search, cache), Around the Fire (ambient mode, visualizer, share cards), the Far Reaches (web remote, parties, SMTC), the Open Hearth (gallery, docs, community kit) |
 
-636 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
+646 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.
 
 ---
@@ -76,7 +77,7 @@ construction.*
    when *you* say so, and comes back in one tap.
 7. ✅ **Stats dashboard** — minutes listened, top artists and tracks,
    month-at-a-glance — all from the same play log. *(the shareable
-   year-end "Wrapped" story is still ahead)*
+   Rewind card — 📋 copy + 🖼 save-PNG — landed in v0.7.2)*
 
 **Room bar:** history & On Repeat fully headless-tested; queue restores
 in <1 s; Rich Presence never touches the audio path and degrades silently
@@ -98,7 +99,7 @@ identical library) are covered by tests.
    accent picker + wallpaper engine; glow fine-tuning is still ahead)*
 4. ✅ **Per-track memory** — playback rate and volume nudges remembered per
    track (podcast at 1.75×, concert film at 1.0×, automatically). *(rate
-   memory shipped; volume nudges are still ahead)*
+   memory shipped; volume nudges landed in v0.7.2)*
 5. ✅ **Lyrics settings & translation** — font, size and brightness controls
    for the lyric stage, plus an optional romanization / translation line
    beside the original text (keyless sources first). *(font, size & family
@@ -107,8 +108,8 @@ identical library) are covered by tests.
    palette, keyboard-only from launch to full-volume. Power users, met.
 7. ✅ **Ambient mixer** — campfire, rain and café loops layered under the
    music at their own volume. It's called Hearth; the fire should be
-   audible. *(procedural campfire & rain shipped; the café loop is still
-   ahead)*
+   audible. *(procedural campfire & rain shipped; the café loop landed
+   in v0.7.1)*
 8. ✅ **Wake-up alarm** — the sleep timer's sibling: fade in a station or
    playlist at a set time, gentle exponential ramp in reverse.
 
@@ -133,7 +134,7 @@ the audio path; everything survives the offscreen suite.
    each shelf (catalogue → web → flat index), powered by `ytm_resilience`
    counters. Bug reports go from "it's broken" to "leg 2 timed out".
    *(the tray report shipped — identity, look, database rows, resilience
-   and log tail; per-leg fetch counters are still ahead)*
+   and log tail; per-leg fetch counters landed in v0.7.2)*
 5. ✅ **MPRIS + media keys** — real desktop integration: MPRIS2 on Linux,
    SMTC on Windows — lockscreen and media-key play/pause/next work even
    when the window is buried. The desktop finally knows Hearth is lit.
@@ -163,7 +164,7 @@ signals are headless-tested with a fake bus.
 5. ✅ **Smart shuffle** — a shuffle that reads your play counts: artists
    spread out, nothing repeats until the queue is spent, favorites surface
    a little more often. Shuffle with taste. *(artist spread + recently-heard
-   rest shipped; play-count-weighted surfacing is still ahead)*
+   rest shipped; play-count-weighted surfacing landed in v0.7.2)*
 
 ---
 

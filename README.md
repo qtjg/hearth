@@ -21,8 +21,8 @@
 <a href="https://github.com/qtjg/hearth"><img src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=20&duration=3200&pause=900&color=FF7A18&center=true&vCenter=true&width=860&height=72&lines=Search+%E2%86%92+stream+%E2%86%92+smile.+No+account%2C+no+keys.;Artist+pages+%C2%B7+synced+lyrics+%C2%B7+74+world+stations;Gradients+%C2%B7+glows+%C2%B7+3D+covers+%C2%B7+crossfades;Seven+themes+%C2%B7+one+cozy+hearth" alt="Hearth in one breath"/></a>
 
 [![CI](https://github.com/qtjg/hearth/actions/workflows/ci.yml/badge.svg)](https://github.com/qtjg/hearth/actions/workflows/ci.yml)
-![tests](https://img.shields.io/badge/tests-588%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
-![version](https://img.shields.io/badge/version-v0.7.0-ff7a18?style=flat-square)
+![tests](https://img.shields.io/badge/tests-646%20passing-3fb950?style=flat-square&logo=pytest&logoColor=white)
+![version](https://img.shields.io/badge/version-v0.7.2-ff7a18?style=flat-square)
 ![lyrics](https://img.shields.io/badge/lyrics-LRCLIB%20synced-7b2ff7?style=flat-square)
 ![python](https://img.shields.io/badge/python-3.10%2B-3776ab?style=flat-square&logo=python&logoColor=white)
 ![Qt](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square&logo=qt&logoColor=white)
@@ -370,7 +370,9 @@ Five ships, five waves — each one a full layer of the app:
 | v0.6.1 | 🎤 Spotlight | artist pages, synced lyrics, banner art |
 | v0.6.2 | 🪞 Glass & Motion | gradients, glass, shadows, glows, 3D covers, view crossfades |
 | **v0.6.3** | 🔥 Keep the Fire Burning | the sudden-stop fix — tracks roll into the next one again, streams that die mid-song get rejoined, dead URLs are skipped once and never re-fed, no spam storms, no zombie pauses |
-| **v0.7.0** | 🔥 The Big Burn | memory & rituals — On Repeat, history, Glow Mix, queue persistence + the wider stage — overlay, theater, style closet + services — MPRIS, Discord RPC, stats + plugins, local library, ambient mixer — **current release** |
+| **v0.7.0** | 🔥 The Big Burn | memory & rituals — On Repeat, history, Glow Mix, queue persistence + the wider stage — overlay, theater, style closet + services — MPRIS, Discord RPC, stats + plugins, local library, ambient mixer |
+| **v0.7.1** | 🧠 Smarts & reach | smart shelves, Rewind story, phone remote (LAN web remote) |
+| **v0.7.2** | 🔥 Ember tending | café ambience, per-track volume nudges, weighted smart shuffle, per-leg fetch counters, shareable Rewind card — **current release** |
 
 ### 🆕 New stuff — the add-on map
 

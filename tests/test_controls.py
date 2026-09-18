@@ -353,7 +353,7 @@ def test_shuffle_button_routes_smart_or_plain_by_config(tmp_path, qapp, monkeypa
     hearth = make_hearth(tmp_path)
     calls = []
     hearth.core.shuffle = lambda: calls.append("plain")
-    hearth.core.shuffle_smart = lambda: calls.append("smart")
+    hearth.core.shuffle_smart = lambda *a: calls.append("smart")
     monkeypatch.setattr(config, "SMART_SHUFFLE", True)
     hearth.window.shuffle_requested.emit()   # button + hotkey S funnel through here
     monkeypatch.setattr(config, "SMART_SHUFFLE", False)
