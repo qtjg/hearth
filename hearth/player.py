@@ -17,6 +17,10 @@ log = logging.getLogger(__name__)
 
 _WAITING_STATUSES: frozenset | None = None
 
+# Distance sentinel for smart shuffle: an artist never seen this queue
+# waits "forever", so first passes keep the queued order intact.
+_UNSEEN_DISTANCE = 1 << 30
+
 
 def _waiting_statuses() -> frozenset:
     """Qt media statuses that mean 'working on it'.
@@ -395,7 +399,7 @@ class QueueEngine:
         """Non-destructively shuffle the upcoming tracks (history untouched)."""
         self._rng.shuffle(self.upcoming)
 
-    def shuffle_upcoming_smart(self) -> None:
+    def shuffle_upcoming_smart(self, weights: dict[str, float] | None = None) -> None:
         """Reorder upcoming so consecutive tracks rarely share an artist.
 
         Greedy pass: at each step pick the candidate whose artist has
@@ -406,23 +410,50 @@ class QueueEngine:
         never come back. History untouched, same multiset of ids minus
         those session replays — the non-destructive contract of
         shuffle(), just with taste.
+
+        `weights` (video_id -> 0..1, from decayed play counts) lets
+        favorites surface a little more often: a seen candidate's
+        waiting distance is stretched by up to
+        SMART_SHUFFLE_WEIGHT_GAIN before comparing, so a hot track wins
+        its starved-but-cold sibling a touch earlier. The stretch only
+        applies to artists already seen this queue — the just-played
+        artist can never buy its way into an immediate encore, and
+        unseen candidates keep their strict first-in-first-out grace.
+        Equal weights reorder exactly like no weights at all.
         """
         if not self.upcoming:
             return
         pool = [t for t in self.upcoming if t.video_id not in self._recent_ids]
         if not pool:
             return   # everything upcoming was just played — leave it be
+        gain = config.SMART_SHUFFLE_WEIGHT_GAIN
+
+        def _boost(distance: int, track: Track) -> float:
+            if distance >= _UNSEEN_DISTANCE:
+                return float(distance)   # unseen artists keep queue order
+            w = 0.0
+            if weights:
+                try:
+                    w = min(max(float(weights.get(track.video_id, 0.0)), 0.0), 1.0)
+                except (TypeError, ValueError):
+                    w = 0.0
+            return distance * (1.0 + gain * w)
+
         last_seen: dict[str, int] = {}
         if self.current is not None:
             last_seen[self.current.artist] = -1   # the now-playing artist just played
         picked: list[Track] = []
         while pool:
-            best_i, best_d = 0, -1
+            best_i, best_d = 0, -1.0
             for i, track in enumerate(pool):
                 artist = track.artist
-                distance = len(picked) - last_seen[artist] if artist in last_seen else 1 << 30
-                if distance > best_d:
-                    best_i, best_d = i, distance   # strict >: ties keep the earliest
+                if artist in last_seen:
+                    distance = len(picked) - last_seen[artist]
+                else:
+                    distance = _UNSEEN_DISTANCE
+                score = _boost(distance, track)
+                if score > best_d:
+                    best_i, best_d = i, score   # strict >: ties keep the earliest
             chosen = pool.pop(best_i)
             last_seen[chosen.artist] = len(picked)
             picked.append(chosen)
@@ -683,13 +714,15 @@ class PlaybackCore(QObject):
         self.engine.shuffle()
         self.queue_changed.emit()
 
-    def shuffle_smart(self) -> None:
+    def shuffle_smart(self, weights: dict[str, float] | None = None) -> None:
         """Opt-in smart shuffle: spread artists through the upcoming queue.
 
         Same contract as shuffle() — upcoming only, history untouched,
         one queue_changed — so nothing in the stream/error paths cares.
+        `weights` (video_id -> 0..1) let favorites surface a little
+        more often; None keeps the pure artist-spread order.
         """
-        self.engine.shuffle_upcoming_smart()
+        self.engine.shuffle_upcoming_smart(weights)
         self.queue_changed.emit()
 
     def set_repeat(self, mode: str) -> None:
