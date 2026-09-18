@@ -1819,6 +1819,35 @@ class StatsView(QWidget):
             label.setWordWrap(True)
             label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             lay.addWidget(label)
+        # share row (v0.7.1): the story leaves the machine only when you say so
+        share_row = QHBoxLayout()
+        copy_btn = QPushButton("📋 Copy")
+        copy_btn.setProperty("flat", True)
+        copy_btn.setToolTip("Copy the story as text — paste it anywhere")
+        copy_btn.clicked.connect(
+            lambda: QApplication.clipboard().setText("\n".join(scenes))
+        )
+        png_btn = QPushButton("🖼 Save PNG")
+        png_btn.setProperty("flat", True)
+        png_btn.setToolTip("Save the story as a shareable card")
+
+        def _save_card() -> None:
+            path, _filter = QFileDialog.getSaveFileName(
+                dlg, "Save Rewind card", "hearth-rewind.png", "PNG image (*.png)")
+            if not path:
+                return
+            from .card import render_card
+
+            ok = render_card(scenes, path, self._palette.key)
+            lbl = QLabel("Card saved ❤" if ok else "Could not save the card")
+            lbl.setProperty("dim", True)
+            lay.addWidget(lbl)
+
+        png_btn.clicked.connect(_save_card)
+        share_row.addWidget(copy_btn)
+        share_row.addWidget(png_btn)
+        share_row.addStretch(1)
+        lay.addLayout(share_row)
         close = QPushButton("Back to the fire")
         close.clicked.connect(dlg.accept)
         lay.addWidget(close)
