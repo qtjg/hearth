@@ -1,4 +1,4 @@
-"""The ambient mixer: procedural campfire & rain, mixed under the music.
+"""The ambient mixer: procedural campfire, café & rain, mixed under the music.
 
 Zero assets, zero dependencies. Every sound is synthesized sample-by-
 sample with struct/math/random into 16-bit mono PCM at 22050 Hz and fed
@@ -13,6 +13,10 @@ Two layers live here:
   one-pole high-pass). Rain is a filtered noise bed (one-pole low-pass
   whose cutoff wanders), occasional droplet plinks, and a distant
   rumble — a heavy low-pass plus a slow LFO breathing on the gain.
+  Café is a murmur bed (brown noise softened by a wandering low-pass),
+  a babble layer (low-passed white noise behind three slow, coprime
+  swells that never quite loop), and occasional cup clinks — tiny
+  decaying sines that sometimes get a saucer answer a beat later.
 - AmbientChannel: the thin Qt wrapper — a QAudioSink in push mode fed
   by a QTimer, with its own level dial (0..1). Audio-device absence is
   a silent no-op: `start` returns False so the caller can post a status
@@ -36,7 +40,7 @@ from . import config
 SAMPLE_RATE = 22050   # small + light: a bed of sound needs no fidelity
 CHANNELS = 1          # mono — ambience, not a stage
 SAMPLE_WIDTH = 2      # bytes per frame: 16-bit little-endian
-KINDS = ("campfire", "rain")
+KINDS = ("campfire", "cafe", "rain")
 
 # --- campfire: brown-noise bed (leaky integrator) ---
 _CAMP_BROWN_INC = 0.02     # integrator input gain
@@ -63,6 +67,27 @@ _RAIN_RUMBLE_LEVEL = 2.5
 _RAIN_LFO_HZ = 0.13        # the room "breathes" every ~8 seconds
 _RAIN_LFO_DEPTH = 0.15     # gain swings 0.85 ± 0.15
 
+# --- café: murmur bed (brown noise softened by a wandering low-pass) ---
+_CAFE_MURMUR_INC = 0.05     # integrator input gain (gentler than campfire)
+_CAFE_MURMUR_LEAK = 0.9995  # per-sample leak (shorter memory = closer room)
+_CAFE_MURMUR_ALPHA = 0.10   # one-pole low-pass on the brown bed
+_CAFE_MURMUR_WANDER = 0.04  # how far the low-pass breathes either way
+_CAFE_MURMUR_LEVEL = 1.6
+# --- café: voice babble (low-passed white behind three slow swells) ---
+_CAFE_BABBLE_ALPHA = 0.22   # low-pass tone: softer than the murmur bed
+_CAFE_BABBLE_LEVEL = 0.9
+_CAFE_SWELL_HZ_A = 0.051    # three coprime-ish swells: the room never loops
+_CAFE_SWELL_HZ_B = 0.083
+_CAFE_SWELL_HZ_C = 0.127
+# --- café: cup clinks (tiny decaying sines, sometimes a saucer answer) ---
+_CAFE_CLINK_RATE = 0.9      # expected clinks per second (a slow morning)
+_CAFE_CLINK_DECAY = 0.9955
+_CAFE_CLINK_LEVEL = 0.35
+_CAFE_CLINK_ECHO_CHANCE = 0.3
+# --- café: the room breathes (slow gain LFO, like every real room) ---
+_CAFE_BREATH_HZ = 0.09
+_CAFE_BREATH_DEPTH = 0.12   # gain swings 0.9 ± 0.12
+
 
 class AmbientGenerator:
     """A deterministic procedural soundscape (22050 Hz / 16-bit / mono).
@@ -87,6 +112,15 @@ class AmbientGenerator:
             self._hp = 0.0        # one-pole high-pass memory
             self._hp_prev_in = 0.0
             self._next_sample = self._campfire_sample
+        elif kind == "cafe":
+            self._brown = 0.0        # murmur integrator state
+            self._bed = 0.0          # wandering low-pass over the murmur
+            self._babble = 0.0       # low-passed white (the voices)
+            self._clink_env = 0.0    # cup clink in flight (0 = none)
+            self._clink_freq = 0.0
+            self._clink_phase = 0.0
+            self._clink_echo = False  # a saucer answer is pending
+            self._next_sample = self._cafe_sample
         else:
             self._bed = 0.0       # wandering low-pass state
             self._rumble = 0.0    # heavy low-pass state (distant thunder)
@@ -133,6 +167,56 @@ class AmbientGenerator:
         self._hp = hp
         self._hp_prev_in = burst
         s = self._brown * _CAMP_BROWN_LEVEL + hp * _CAMP_POP_LEVEL
+        return 1.0 if s > 1.0 else (-1.0 if s < -1.0 else s)
+
+    def _cafe_sample(self) -> float:
+        self._pos += 1
+        rng = self._rng
+        white = rng.uniform(-1.0, 1.0)
+        t = self._pos / SAMPLE_RATE
+        # murmur bed: brown noise softened by a low-pass whose cutoff
+        # wanders with the second swell — the room never sits still
+        self._brown = (self._brown * _CAFE_MURMUR_LEAK
+                       + _CAFE_MURMUR_INC * rng.uniform(-1.0, 1.0))
+        alpha = _CAFE_MURMUR_ALPHA + _CAFE_MURMUR_WANDER * math.sin(
+            2.0 * math.pi * _CAFE_SWELL_HZ_B * t + self._lfo_phase)
+        self._bed += alpha * (self._brown - self._bed)
+        # voice babble: low-passed white noise behind three slow swells —
+        # conversations you can't quite make out, rising and falling
+        self._babble += _CAFE_BABBLE_ALPHA * (white - self._babble)
+        swell = (1.0
+                 + math.sin(2.0 * math.pi * _CAFE_SWELL_HZ_A * t
+                            + self._lfo_phase)
+                 + math.sin(2.0 * math.pi * _CAFE_SWELL_HZ_B * t * 1.7 + 1.3)
+                 + math.sin(2.0 * math.pi * _CAFE_SWELL_HZ_C * t + 2.6)) / 4.0
+        babble = self._babble * max(0.15, swell)
+        # cup clinks: occasional tiny sines; some get a saucer answer a
+        # beat later at a slightly different pitch (same envelope trick
+        # as the rain plinks, but rarer, lower level, and conversational)
+        if self._clink_env <= 0.0:
+            if rng.random() < _CAFE_CLINK_RATE / SAMPLE_RATE:
+                self._clink_env = rng.uniform(0.5, 1.0)
+                self._clink_freq = rng.uniform(1400.0, 3200.0)
+                self._clink_phase = 0.0
+                self._clink_echo = (rng.random() < _CAFE_CLINK_ECHO_CHANCE)
+        else:
+            self._clink_phase += 2.0 * math.pi * self._clink_freq / SAMPLE_RATE
+            self._clink_env *= _CAFE_CLINK_DECAY
+            if self._clink_env < 0.01:
+                if self._clink_echo:
+                    self._clink_echo = False       # the saucer answers
+                    self._clink_env = 0.6
+                    self._clink_freq *= rng.uniform(0.9, 1.1)
+                else:
+                    self._clink_env = 0.0
+        clink = (self._clink_env * math.sin(self._clink_phase)
+                 if self._clink_env > 0.0 else 0.0)
+        # the room breathes: one slow LFO on the overall gain
+        gain = 0.9 + _CAFE_BREATH_DEPTH * math.sin(
+            2.0 * math.pi * _CAFE_BREATH_HZ * t + self._lfo_phase)
+        s = ((self._bed * _CAFE_MURMUR_LEVEL
+              + babble * _CAFE_BABBLE_LEVEL
+              + clink * _CAFE_CLINK_LEVEL) * gain)
         return 1.0 if s > 1.0 else (-1.0 if s < -1.0 else s)
 
     def _rain_sample(self) -> float:

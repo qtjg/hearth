@@ -77,10 +77,10 @@ def samples_of(buf) -> list[int]:
 def test_generator_rejects_unknown_kind_and_lists_kinds():
     with pytest.raises(ValueError):
         AmbientGenerator("blizzard")
-    assert set(amb.KINDS) == {"campfire", "rain"}
+    assert set(amb.KINDS) == {"campfire", "cafe", "rain"}
 
 
-@pytest.mark.parametrize("kind", ["campfire", "rain"])
+@pytest.mark.parametrize("kind", ["campfire", "cafe", "rain"])
 def test_generator_deterministic_given_seed(kind):
     other = "rain" if kind == "campfire" else "campfire"
     a, b = AmbientGenerator(kind, seed=7), AmbientGenerator(kind, seed=7)
