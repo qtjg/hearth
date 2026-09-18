@@ -4,7 +4,8 @@
 > [README](README.md). It is revisited every release — waves get promoted,
 > re-scoped, or retired, but the fire never gets a "maybe".
 >
-> Last stoked: **2026-09-14** (v0.7.0 "The Big Burn"). By crew decision, every wave was folded into
+> Last stoked: **2026-09-18** (v0.7.1 patch shipped; v0.8.0 "The Long Winter Nights"
+> charted). Earlier, by crew decision, every wave was folded into
 > **one main version** — all four themes, one fire, built in order. Every
 > add-on discussed with the crew has a row here; nothing lives only in a
 > chat log anymore.
@@ -22,8 +23,10 @@
 | v0.6.2 | Glass & Motion | gradients, glass surfaces, shadows & accent glows, 3D rounded covers + floor reflection, view crossfades, glossy EQ bars |
 | v0.6.3 | Keep the Fire Burning | self-healing playback: EndOfMedia relay, mid-song rejoin, stall watchdog, guarded error-skip |
 | v0.7.0 | The Big Burn | memory & rituals (On Repeat, day history, Glow Mix, queue persistence, stats, export/import), the wider stage (lyrics overlay, theater, style closet, Ctrl+K, smart shuffle, wake-up alarm), reach (MPRIS, update whisper, diagnostics, AUR/winget/brew drafts), the festival (crossfade, plugin hooks, local library, ambient mixer, i18n scaffold, Discord RPC) |
+| v0.7.1 | Smarts & reach | smart shelves (Most played, Recently loved, Rare gems), Rewind story, phone remote (LAN web remote) |
+| v0.8.0 | The Long Winter Nights *(charted)* | the Sound Forge (EQ, loudness, karaoke, gapless), the Memory Palace (Rewind, rules, scrobbles, lyrics search, cache), Around the Fire (ambient mode, visualizer, share cards), the Far Reaches (web remote, parties, SMTC), the Open Hearth (gallery, docs, community kit) |
 
-588 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
+636 tests and counting, headless on a 3 OS × 2 Python CI matrix. Every
 network layer is *never-raises*; the UI never blocks on the world.
 
 ---
@@ -164,6 +167,169 @@ signals are headless-tested with a fake bus.
 
 ---
 
+## 🔮 v0.8.0 — The Long Winter Nights *(the next wave — charted 2026-09-18)*
+
+*Every feature suggested in the crew chat, deduped against what v0.7.0
+already shipped, gathered into five rooms. ♻️ marks stragglers —
+half-shipped pieces already tracked elsewhere in this file — that this
+wave closes out for good.*
+
+### 🎛️ Room 5 — The Sound Forge
+
+*Warmth you can hear. This room makes the audio itself cozy.*
+
+1. **10-band equalizer + presets** — the native backend probe graduates: an
+   mpv-backed `PlaybackCore` unlocks a real EQ (Flat, Bass Boost, Vocal
+   Clamp, Late Night, plus a user preset slot). Presets are pure JSON —
+   same data-file rule as palettes. *(accepts: A/B toggle, per-output-device
+   memory, off-by-default when backend probe fails)*
+2. **Loudness normalization** — the catalog's loudness hints become a
+   ReplayGain-style pass: no more reaching for the volume knob when a
+   quiet acoustic track follows a mastered-to-death single. *(accepts:
+   per-track and per-playlist modes; measured once, cached in SQLite)*
+3. **Global speed knob** — per-track rate memory already exists; add the
+   session-wide 0.5×–2.0× dial on the player bar with pitch preservation.
+   *(accepts: keyboard shortcuts, survives track changes, never fights
+   per-track memory — session dial wins until cleared)*
+4. **Karaoke mode** — center-channel cancellation ducks the vocal when the
+   mix allows it; the synced-lyrics stage goes full-width while it's on.
+   Keyless, DSP-only, honest failure: if the mix defeats the trick, the
+   toggle says so instead of pretending. *(accepts: offscreen DSP tests on
+   synthetic stereo fixtures; auto-off on mono sources)*
+5. ♻️ **True gapless handoff** — crossfade shipped in v0.7.0; finish the
+   pre-resolved next-track handoff so live albums and DJ mixes play like
+   the artist intended. *(accepts: <50 ms seam on synthetic fixtures,
+   fallback to crossfade when pre-resolve fails)*
+
+**Room bar:** EQ and normalization never touch the UI thread; every DSP
+toggle is headless-tested; disabling a DSP feature restores bit-identical
+output paths.
+
+---
+
+### 🏮 Room 6 — The Memory Palace
+
+*The hearth should know you — and show off what it knows.*
+
+1. **Listening Rewind** 🎁 — the Wrapped-style year-in-review the stats
+   dashboard promised: top tracks, artists, genres, minutes by the fire,
+   listening personality card, all rendered as a shareable swipeable story
+   from the same play log. *(accepts: headless-rendered cards, one-tap
+   export as PNG set, zero data leaves the machine)*
+2. **Smart-playlist rules builder** — On Repeat and Glow Mix were the
+   prototypes; this is the general case: "played ≥5 times last month",
+   "added this week AND artist ~likes", genre moods — rules stored as
+   data, evaluated on the job pool, refreshed on Home like any shelf.
+   *(accepts: rules import/export as JSON, honest empty state, no query
+   ever blocks the UI)*
+3. **Scrobble bridges, finished** — the v0.7.0 keyed queue + signing grows
+   its opt-in onboarding (Last.fm), and gains a **ListenBrainz** bridge
+   (open protocol, fits the keyless spirit). Offline scrobbles queue and
+   drain when the network returns. *(accepts: never gates playback, fail
+   silently into the queue, full payload round-trip tests)*
+4. **Lyrics-line search** — paste a line you half-remember into the search
+   box; Hearth matches against the LRCLIB text it already caches. The
+   fastest "what song says…" answer on any desktop. *(accepts: works from
+   cache offline, scores results, deep-links to the glowing line)*
+5. **Cache manager** — diagnostics grew a log tail; now show the caches
+   themselves: covers, lyrics, stream pre-resolve — with sizes and a
+   broom. *(accepts: per-cache clear with one tap, size shown without
+   blocking, safe-while-playing guarantee)*
+
+**Room bar:** Rewind renders from local data only; rules engine ships
+with its own fuzz tests; scrobble failures can never surface as UI errors.
+
+---
+
+### 🔥 Room 7 — Around the Fire
+
+*The brand, turned up. Nobody else can ship these.*
+
+1. **Ambient Hearth mode** 🪵 — the signature feature: one toggle dims the
+   UI, brings up the animated fireplace, layers the procedural campfire
+   under the music, and lets the full-screen visualizer dance in the
+   flames. A screensaver, a mood, and an identity in one. *(accepts:
+   GPU-cheap at 60 fps, pairs with the existing ambient mixer volumes,
+   auto-exits on any playback interaction)*
+2. **Full Now-Playing visualizer** — the mini bars in the player bar grow
+   up: a spectrum / waveform / ember-particle mode for the Now Playing
+   pane, palette-colored per the style closet. *(accepts: three modes,
+   fps floor of 60 on the CI machines, degrades to the mini bars
+   gracefully on weak GPUs)*
+3. **Share cards** — a gorgeous auto-composed PNG of what's burning: cover
+   art, title/artist, one glowing lyric line, and a QR to the track.
+   Styled by the active palette so every card looks like its hearth.
+   *(accepts: rendered offscreen with the same engine as the screenshots,
+   no network calls, one-tap save/copy)*
+
+**Room bar:** visualizer samples never block or allocate per-frame on the
+audio path; share cards are byte-identical across renders of the same
+state; all three features survive the offscreen suite.
+
+---
+
+### 🕹️ Room 8 — The Far Reaches
+
+*Every desktop, and now the phone on the couch.*
+
+1. **Web remote** — scan a QR, open a tiny LAN-only page: play/pause, next,
+   volume, queue reorder, and a "send to queue" search. Zero accounts, zero
+   cloud — the phone and the hearth just talk. *(accepts: binds to LAN by
+   default with a confirm dialog, token-paired on first scan, headless
+   API tests)*
+2. **Listening parties** 🎉 *(promoted from the wish pool)* — the web
+   remote's big sibling: a shared queue link where everyone adds tracks
+   and votes the next one up. Party mode keeps host playback authoritative.
+   *(accepts: host-only transport, vote settles <1 s on LAN, spectator
+   mode can never pause the host's music)*
+3. ♻️ **Windows SMTC** — the MPRIS2 row's twin finishes: lockscreen and
+   media keys on Windows, same fake-bus test discipline via the SMTC
+   shim. *(accepts: CI on windows-latest asserts play/pause/next events)*
+4. ♻️ **Per-leg fetch counters** — the diagnostics dialog starts showing
+   which fetch leg served each shelf, finishing the tray-report promise.
+   *(accepts: counters visible in the existing dialog, zero overhead when
+   diagnostics is closed)*
+
+**Room bar:** the remote server starts only from an explicit user action;
+party queues degrade to solo mode when peers vanish; SMTC events are
+tested with the same rigor as MPRIS.
+
+---
+
+### 🧱 Room 9 — The Open Hearth
+
+*So the crew can grow the fire without forking it.*
+
+1. **Palette & shelf gallery** — plugin hooks v0.7.0 shipped the surface;
+   this ships the venue: a browsable gallery of community palette packs
+   and shelf sources, installed from a URL or a local file, reviewed by
+   the same headless test harness before they can land. *(accepts:
+   manifest versioning enforced, one-click install/remove, sandboxed to
+   the documented surface)*
+2. **Docs site** — the README's warmth, expanded: install guides per OS,
+   hotkey cheatsheet, plugin authoring tutorial, and the architecture
+   diagrams already committed as SVGs. Static, keyless, fast.
+3. **Community kit** — CONTRIBUTING.md, issue templates (bug / feature /
+   the inevitable "lyrics wrong" triage), `good first issue` labels, and a
+   PR checklist that mirrors the wave rules. *(accepts: a brand-new
+   contributor can go from fork to green CI without asking in chat)*
+
+**Room bar:** gallery items are pure data/entry-point plugins — no
+forking required; docs build in CI; every template links back to the
+standing guardrails.
+
+---
+
+### 🧹 Stragglers ledger *(already tracked — closed inside this wave)*
+
+- Café loop for the ambient mixer *(Room 2 follow-up → ships with Room 7.1)*
+- Glow fine-tuning in the style closet *(→ ships with Room 7.2's palette work)*
+- Volume nudges in per-track memory *(→ ships with Room 5.3's speed knob)*
+- Lyrics brightness + translation line *(→ ships with Room 6.4's lyrics work)*
+- Play-count-weighted smart shuffle *(→ ships with Room 6.2's rules engine)*
+
+---
+
 ## 🌱 Wish pool
 
 *Not scheduled, not forgotten — promoted into a room when the fire is ready:*
@@ -175,7 +341,8 @@ signals are headless-tested with a fake bus.
 - ✅ Local music library side-by-side with YT Music shelves — *(shipped in
   v0.7.0 as the 📁 Local tab + folder scanner)*
 - Podcasts & audiobooks shelf (per-track speed memory makes this sing)
-- Listening parties — share a queue link, synced "next track" voting
+- Listening parties — share a queue link, synced "next track" voting —
+  *(promoted into v0.8 Room 8 — The Far Reaches)*
 - ✅ Mini-visualizer in the player bar (palette-colored, GPU-cheap) —
   *(shipped in v0.7.0)*
 
@@ -189,3 +356,6 @@ signals are headless-tested with a fake bus.
 - Every room lands with headless tests; CI stays 3 OS × 2 Python green.
 - Only this repo's own shelves are touched — no account data leaves the
   machine except to the services the user chose.
+- New in v0.8: **audio DSP may add latency to *start*, never to
+  *control*** — seek/pause/volume respond instantly even while the Forge
+  is churning.
