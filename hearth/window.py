@@ -66,6 +66,7 @@ from .effects import (
 )
 from .lyrics import LrcLine, SyncedLyrics
 from .models import Album, Artist, Track
+from .rewind import build_rewind_story
 from .storage import HearthStore
 from .theme import (
     STYLES,
@@ -233,7 +234,8 @@ class HomeView(QWidget):
         self._shelves: dict[str, Shelf] = {}
         for name in (
             "Quick picks", "Top tracks", "On Repeat", "Pinned favorites",
-            "Recently played", "🔌 Plugins",
+            "Recently played", "Most played", "Recently loved", "Rare gems",
+            "🔌 Plugins",
         ):
             self._shelves[name] = Shelf(palette, name)
             self._body_lay.addWidget(self._shelves[name])
@@ -1779,6 +1781,12 @@ class StatsView(QWidget):
         head.addWidget(hero)
         head.addStretch(1)
         head.addWidget(self._status)
+        rewind_btn = QPushButton("🎁 Rewind story")
+        rewind_btn.setProperty("flat", True)
+        rewind_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        rewind_btn.setToolTip("Your year at the hearth, told in a few scenes")
+        rewind_btn.clicked.connect(self._show_rewind)
+        head.addWidget(rewind_btn)
         outer.addLayout(head)
 
         # page 0: the dashboard · page 1: the no-plays invitation
@@ -1787,6 +1795,34 @@ class StatsView(QWidget):
         self._pages.addWidget(self._build_content())
         self._pages.addWidget(self._build_empty_page())
         self._pages.setCurrentIndex(1)
+
+    # --- the rewind story (v0.7.1) ---
+
+    def _show_rewind(self) -> None:
+        """🎁 Rewind: the year told in a few honest scenes over the stats."""
+        if self.store is None:
+            return
+        stats = self.store.stats_summary(top=8)
+        scenes = build_rewind_story(
+            stats,
+            self.store.history_days(),
+            stats.get("top_tracks") or [],
+            stats.get("top_artists") or [],
+        )
+        dlg = QDialog(self)
+        dlg.setWindowTitle("🎁 Rewind — your year at the hearth")
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(24, 20, 24, 14)
+        lay.setSpacing(10)
+        for scene in scenes:
+            label = QLabel(scene)
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            lay.addWidget(label)
+        close = QPushButton("Back to the fire")
+        close.clicked.connect(dlg.accept)
+        lay.addWidget(close)
+        dlg.exec()
 
     # --- construction bits ---
 
@@ -2737,6 +2773,7 @@ class MainWindow(QMainWindow):
     local_add_folder_requested = pyqtSignal()        # 📂 pick a folder to scan
     local_rescan_requested = pyqtSignal()            # 🔄 rescan remembered roots
     glow_mix_requested = pyqtSignal()                # ✨ one-tap Glow Mix ritual
+    remote_requested = pyqtSignal()                  # 📱 open the phone remote
     play_pause_requested = pyqtSignal()
     next_requested = pyqtSignal()
     prev_requested = pyqtSignal()
@@ -2878,6 +2915,12 @@ class MainWindow(QMainWindow):
         accent_btn.setToolTip("Accent colors (live preview)")
         accent_btn.clicked.connect(self._open_accent_picker)
         head.addWidget(accent_btn)
+        remote_btn = QPushButton("📱")
+        remote_btn.setProperty("flat", True)
+        remote_btn.setFixedWidth(30)
+        remote_btn.setToolTip("Phone remote — control Hearth from any browser")
+        remote_btn.clicked.connect(lambda _=False: self.remote_requested.emit())
+        head.addWidget(remote_btn)
         head.addWidget(imp)
         head.addWidget(add)
         lay.addSpacing(12)
@@ -2931,7 +2974,8 @@ class MainWindow(QMainWindow):
 
     def _wire_internal(self) -> None:
         for shelf_name in ("Quick picks", "Top tracks", "Pinned favorites",
-                           "Recently played", "🔌 Plugins"):
+                           "Recently played", "Most played", "Recently loved",
+                           "Rare gems", "🔌 Plugins"):
             self.home_view.shelf(shelf_name).card_picked.connect(
                 lambda t, ctx: self.playlist_picked.emit(list(ctx), list(ctx).index(t))
             )
@@ -3134,6 +3178,17 @@ class MainWindow(QMainWindow):
 
     def set_on_repeat(self, tracks: list[Track]) -> None:
         self.home_view.set_shelf("On Repeat", tracks)
+
+    def set_smart_shelves(
+        self,
+        most_played: list[Track],
+        recently_loved: list[Track],
+        rare_gems: list[Track],
+    ) -> None:
+        """The three auto-refreshing smart shelves (v0.7.1)."""
+        self.home_view.set_shelf("Most played", list(most_played))
+        self.home_view.set_shelf("Recently loved", list(recently_loved))
+        self.home_view.set_shelf("Rare gems", list(rare_gems))
 
     def set_local_tracks(self, tracks: list[Track]) -> None:
         self.local_view.set_tracks(list(tracks))

@@ -141,6 +141,72 @@ class HearthStore:
         ).fetchall()
         return [Track.from_json(payload) for (payload,) in rows]
 
+    # --- smart shelves (v0.7.1): auto-refreshing playlists with no upkeep ---
+
+    def smart_most_played(self, limit: int = 25) -> list[Track]:
+        """The all-time rotation: most-played first, newest payload wins.
+
+        Same grouping contract as top_tracks() but sized for a shelf and
+        guarded against corrupt rows — a broken payload is skipped, never
+        allowed to blank the shelf.
+        """
+        rows = self._db.execute(
+            "SELECT payload FROM history GROUP BY video_id "
+            "ORDER BY COUNT(*) DESC, MAX(played_at) DESC LIMIT ?",
+            (max(int(limit), 0),),
+        ).fetchall()
+        tracks: list[Track] = []
+        for (payload,) in rows:
+            try:
+                tracks.append(Track.from_json(payload))
+            except (TypeError, ValueError):
+                continue
+        return tracks
+
+    def smart_recently_loved(self, limit: int = 25, days: int = 30) -> list[Track]:
+        """Favorites pinned within the last `days` days, newest pin first.
+
+        The "what did I add to my heart lately" shelf — reads the
+        favorites table's own created_at, so unfavorite/refavorite
+        cycles honestly refresh a track's place here.
+        """
+        cutoff = time.time() - max(int(days), 0) * 86400.0
+        rows = self._db.execute(
+            "SELECT payload FROM favorites WHERE created_at >= ? "
+            "ORDER BY created_at DESC, rowid DESC LIMIT ?",
+            (cutoff, max(int(limit), 0)),
+        ).fetchall()
+        tracks: list[Track] = []
+        for (payload,) in rows:
+            try:
+                tracks.append(Track.from_json(payload))
+            except (TypeError, ValueError):
+                continue
+        return tracks
+
+    def smart_rare_gems(self, limit: int = 25, max_plays: int = 2) -> list[Track]:
+        """Favorites you barely spin — pinned, but played ≤ `max_plays` times.
+
+        The quiet corner of the library: tracks you loved enough to pin
+        but never gave room to grow. Unplayed favorites count as 0 plays
+        and surface first among ties (newest pin wins).
+        """
+        rows = self._db.execute(
+            "SELECT f.payload FROM favorites f LEFT JOIN "
+            "(SELECT video_id, COUNT(*) AS plays FROM history GROUP BY video_id) h "
+            "ON h.video_id = f.video_id "
+            "WHERE COALESCE(h.plays, 0) <= ? "
+            "ORDER BY f.created_at DESC, f.rowid DESC LIMIT ?",
+            (max(int(max_plays), 0), max(int(limit), 0)),
+        ).fetchall()
+        tracks: list[Track] = []
+        for (payload,) in rows:
+            try:
+                tracks.append(Track.from_json(payload))
+            except (TypeError, ValueError):
+                continue
+        return tracks
+
     def prune_history(self, keep: int = 500) -> int:
         """Delete history beyond the newest `keep` rows. Returns rows removed."""
         cur = self._db.execute(

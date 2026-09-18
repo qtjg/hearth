@@ -22,7 +22,13 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import QAction, QKeySequence, QShortcut
-from PyQt6.QtWidgets import QApplication, QFileDialog, QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import (
+    QApplication,
+    QFileDialog,
+    QMenu,
+    QMessageBox,
+    QSystemTrayIcon,
+)
 
 from . import config, plugins, theme, world, ytm_resilience
 from .ambient import AmbientChannel
@@ -55,6 +61,7 @@ from .models import Album, Artist, Collection, Track
 from .mpris import MPRIS_AVAILABLE, MprisService
 from .panel import FloatingPanel
 from .player import PlaybackCore
+from .remote import RemoteServer
 from .storage import HearthStore
 from .theme import lyrics_font
 from .toast import NowPlayingToast
@@ -411,6 +418,8 @@ class Hearth:
         self._wallpaper_alpha = config.WALLPAPER_ALPHA_DEFAULT
         self.window = MainWindow(palette_key, store=self.store)
         self.command_palette = CommandPalette(palette_key, parent=self.window)
+        # the phone remote: created lazily on first 📱, one session per run
+        self._remote: RemoteServer | None = None
         # wake-up alarm: one-shot, tray-scheduled, fades the room back in
         self.alarm = AlarmController(parent=self.qapp)
         self.alarm.fired.connect(self._fire_alarm)
@@ -512,6 +521,7 @@ class Hearth:
         w.local_add_folder_requested.connect(self._local_add_folder)
         w.local_rescan_requested.connect(self._local_rescan)
         w.glow_mix_requested.connect(self._glow_mix)
+        w.remote_requested.connect(self._open_remote)
         w.play_pause_requested.connect(self.core.toggle)
         w.next_requested.connect(self.core.next)
         w.prev_requested.connect(self.core.previous)
@@ -821,6 +831,11 @@ class Hearth:
             self.store.on_repeat(
                 config.ON_REPEAT_SHELF_LIMIT, config.ON_REPEAT_HALF_LIFE_DAYS
             )
+        )
+        self.window.set_smart_shelves(
+            self.store.smart_most_played(12),
+            self.store.smart_recently_loved(12),
+            self.store.smart_rare_gems(12),
         )
         self._refresh_plugin_shelf()   # plugin shelf sources, off the UI thread
         if not self._enable_streaming:
@@ -1383,7 +1398,65 @@ class Hearth:
 
         return QUrl.fromLocalFile(path).toString()
 
-    # --- the Glow Mix (v0.7.0 rituals) ---
+    # --- the phone remote (v0.7.1) ---
+
+    def _remote_controller(self) -> object:
+        """A duck-typed controller for RemoteServer — Qt-free, headless-safe.
+
+        Reads only live state from the playback core; every command maps
+        onto the same core calls the window buttons use, so nothing here
+        can bypass the immune system or the queue engine.
+        """
+        core = self.core
+
+        class Bridge:
+            def status(self_inner) -> dict:
+                track = core.engine.current
+                return {
+                    "playing": bool(core.is_playing),
+                    "title": getattr(track, "title", None),
+                    "artist": getattr(track, "artist", None),
+                    "video_id": getattr(track, "video_id", None),
+                    "volume": round(float(core.volume), 3),
+                    "position_ms": int(core.position_ms),
+                    "upcoming": len(core.engine.upcoming),
+                }
+
+            def cmd(self_inner, name: str, volume: float | None = None) -> None:
+                if name == "toggle":
+                    core.toggle()
+                elif name == "play":
+                    if not core.is_playing:
+                        core.toggle()
+                elif name == "pause":
+                    if core.is_playing:
+                        core.toggle()
+                elif name == "next":
+                    core.next()
+                elif name == "prev":
+                    core.previous()
+                elif name == "vol" and volume is not None:
+                    core.set_volume(max(0.0, min(1.0, float(volume))))
+
+        return Bridge()
+
+    def _open_remote(self) -> None:
+        """📱 Start (or reuse) the remote session and show the shareable link.
+
+        The link is the key: anyone holding it can drive playback, so the
+        dialog says so plainly. The server is LAN-bound but token-gated;
+        one session lives per app run and is shut down with the app.
+        """
+        if self._remote is None:
+            self._remote = RemoteServer(self._remote_controller())
+            self._remote.start()
+        QMessageBox.information(
+            self.window,
+            "📱 Phone remote",
+            "Open this link in your phone's browser (same Wi-Fi):\n\n"
+            f"{self._remote.url()}\n\n"
+            "The link is the key — anyone who has it can control playback.",
+        )
 
     def _glow_mix(self) -> None:
         """✨ One tap in the On Repeat shelf: your rotation plus kindred fire."""
@@ -2029,6 +2102,8 @@ class Hearth:
     def shutdown(self) -> None:
         # Let in-flight jobs land while their recipients are still alive.
         QThreadPool.globalInstance().waitForDone(5000)
+        if self._remote is not None:
+            self._remote.stop()   # the phone remote burns out with the app
         self.ambient.stop()   # release the ambience sink fully on the way out
         self.mpris.stop()
         self.presence.stop()  # and let Discord forget the hearth until next time
