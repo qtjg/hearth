@@ -77,6 +77,13 @@ log = logging.getLogger(__name__)
 # thread can outlive it and would emit into a deleted carrier.
 _INFLIGHT: set = set()
 
+# Tray labels for the ambient soundscapes (kind -> display name).
+AMBIENT_KIND_LABELS = {
+    "campfire": "🏕 Campfire",
+    "cafe": "☕ Café",
+    "rain": "🌧 Rain",
+}
+
 
 def data_dir() -> Path:
     """Per-OS app data directory (Linux: ~/.local/share/Hearth)."""
@@ -487,7 +494,7 @@ class Hearth:
         p.prev_requested.connect(self.core.previous)
         p.shuffle_requested.connect(self._shuffle)
         p.repeat_requested.connect(self._cycle_repeat)
-        p.volume_changed.connect(self.core.set_volume)
+        p.volume_changed.connect(self._on_user_volume)
         p.seek_requested.connect(self.core.seek)
 
     def _wire_window(self) -> None:
@@ -527,7 +534,7 @@ class Hearth:
         w.prev_requested.connect(self.core.previous)
         w.shuffle_requested.connect(self._shuffle)
         w.repeat_requested.connect(self._cycle_repeat)
-        w.volume_changed.connect(self.core.set_volume)
+        w.volume_changed.connect(self._on_user_volume)
         w.seek_requested.connect(self.core.seek)
         w.now_view.lyrics_font_changed.connect(self._on_lyrics_font_changed)
         w.refresh_playlists()
@@ -609,7 +616,8 @@ class Hearth:
         ambient_menu.addAction(
             self._make_action("Off", lambda: self._set_ambient(None, 0.0))
         )
-        for kind_label, kind in (("🏕 Campfire", "campfire"), ("🌧 Rain", "rain")):
+        for kind_label, kind in (("🏕 Campfire", "campfire"), ("☕ Café", "cafe"),
+                                 ("🌧 Rain", "rain")):
             sub = QMenu(kind_label, ambient_menu)
             for frac in config.AMBIENT_LEVELS:
                 act = QAction(f"{int(round(frac * 100))}%", sub)
@@ -1090,6 +1098,7 @@ class Hearth:
         if track is not None:
             self.store.log_play(track)
             self._restore_track_rate(track)   # this song's remembered speed
+            self._restore_track_volume(track)  # this song's remembered nudge
         self._persist()
         # desktop lyrics: a new song means a fresh, empty strip
         self._lyrics_engine = None
@@ -1147,10 +1156,31 @@ class Hearth:
         so nothing downstream can tell the difference.
         """
         if config.SMART_SHUFFLE:
-            self.core.shuffle_smart()
-            self.surface.set_status("Smart shuffle — artists spread out")
+            self.core.shuffle_smart(self._shuffle_weights())
+            self.surface.set_status("Smart shuffle — artists spread, favorites surface")
         else:
             self.core.shuffle()
+
+    def _shuffle_weights(self) -> dict[str, float]:
+        """Decayed play counts, max-normalized to 0..1, for the smart shuffle.
+
+        The On Repeat engine already knows which tracks are hot right now;
+        feeding its scores into the shuffle is what turns "artists spread
+        out" into "favorites surface a little more often". Never raises:
+        a tired database means an unweighted shuffle, same as always.
+        """
+        try:
+            pairs = self.store.on_repeat_scores(
+                limit=config.SMART_SHUFFLE_WEIGHTS_LIMIT
+            )
+        except Exception:  # noqa: BLE001 - weights are a garnish, not a meal
+            return {}
+        if not pairs:
+            return {}
+        top = max(score for _track, score in pairs)
+        if top <= 0.0:
+            return {}
+        return {track.video_id: score / top for track, score in pairs}
 
     # --- per-track speed memory (v0.8.0 controls) ---
 
@@ -1167,6 +1197,35 @@ class Hearth:
         rate = saved if saved in config.PLAYBACK_RATES else 1.0
         if abs(rate - self.core.rate) > 1e-9:
             self.core.set_rate(rate)
+
+    # --- per-track volume nudges (v0.7.1) ---
+
+    def _on_user_volume(self, volume: float) -> None:
+        """The user moved a volume dial: apply it + stick it to this track.
+
+        Quiet podcast episodes get a nudge up, loud remasters a nudge
+        down — and the nudge comes back with the track. Programmatic
+        volume changes (mute, the alarm fade, restore-on-launch) call
+        core.set_volume directly and never land here, so they stay
+        anonymous and write no prefs.
+        """
+        self.core.set_volume(volume)
+        track = self.core.engine.current
+        if track is None:
+            return   # a dial with no song belongs to nobody
+        try:
+            self.store.set_track_pref(track.video_id, "vol", float(volume))
+        except Exception:  # noqa: BLE001 - a pref write must not touch playback
+            pass
+
+    def _restore_track_volume(self, track: Track) -> None:
+        """A track starts: put its remembered volume nudge back (if any)."""
+        saved = self.store.track_pref(track.video_id, "vol", None)
+        if saved is None:
+            return   # no nudge on record: the dial stays where the user left it
+        self.core.set_volume(saved)
+        self.panel.set_volume(saved)
+        self.window.set_volume(saved)
 
     # --- mini-visualizer state (v0.8.0 controls) ---
 
@@ -1590,7 +1649,7 @@ class Hearth:
                 self.surface.set_status("Ambient unavailable — no audio device")
                 return
             self.ambient.set_level(level)
-        name = "🏕 Campfire" if kind == "campfire" else "🌧 Rain"
+        name = AMBIENT_KIND_LABELS.get(kind, kind)
         self.surface.set_status(f"Ambient: {name} at {label}")
 
     def _set_sleep(self, minutes: int) -> None:
@@ -1776,7 +1835,8 @@ class Hearth:
 
     def _show_diagnostics(self) -> None:
         """🩺 Open the health page (modeless — never blocks the room)."""
-        report = gather_report(self.store, resilience=ytm_resilience)
+        report = gather_report(self.store, resilience=ytm_resilience,
+                               fetch_counters=getattr(self.catalog, "counters", None))
         dlg = DiagnosticsDialog(report, self.window)
         self._diag_dlg = dlg
         dlg.show()
