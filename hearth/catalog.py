@@ -35,6 +35,18 @@ class Catalog:
 
     def __init__(self):
         self._client = None
+        # Per-leg fetch counters for the diagnostics report (v0.7.1):
+        # keys like "search-songs.ok" / "search-songs.fail" /
+        # "web-fallback.empty" — which fetch leg served the shelves,
+        # counted right where each attempt is judged. Never raises.
+        self.counters: dict[str, int] = {}
+
+    def _bump(self, key: str) -> None:
+        """Count one fetch outcome; a broken counter never bites."""
+        try:
+            self.counters[key] = self.counters.get(key, 0) + 1
+        except Exception:  # noqa: BLE001 - bookkeeping must stay invisible
+            pass
 
     def _get_client(self, client_factory: Callable | None = None):
         if client_factory is not None:
@@ -57,17 +69,27 @@ class Catalog:
         sleep: Callable[[float], None] = time.sleep,
         default=None,
     ):
-        """Run `action` with exponential backoff. `default` on exhaustion."""
+        """Run `action` with exponential backoff. `default` on exhaustion.
+
+        Each attempt is counted under the label's operation name
+        ("search-songs(q)" -> "search-songs.ok" / ".fail") so the
+        diagnostics page can say which leg served (or starved) a shelf.
+        """
+        leg = label.split("(", 1)[0].strip() or "fetch"
         for attempt in range(attempts):
             try:
-                return action()
+                result = action()
+                self._bump(f"{leg}.ok")
+                return result
             except Exception as exc:  # noqa: BLE001 - network layer must not crash UI
                 if attempt == attempts - 1:
                     log.warning("%s failed after %d attempts: %s", label, attempts, exc)
+                    self._bump(f"{leg}.fail")
                     return default
                 delay = base_delay * (2 ** attempt)
                 log.info("%s retry %d/%d in %.1fs (%s)", label, attempt + 1, attempts, delay, exc)
                 sleep(delay)
+        self._bump(f"{leg}.fail")
         return default
 
     def search(
@@ -174,13 +196,17 @@ class Catalog:
             mapped = self._map_results(raw or [])
             if mapped:
                 return mapped
+            self._bump(f"search-everywhere-{scope}.empty")
         if fallback is None:
             return []
         try:
-            return list(fallback(query, limit))
+            served = list(fallback(query, limit))
         except Exception as exc:  # noqa: BLE001 - the fallback must not crash either
             log.warning("search_everywhere fallback failed for %r: %s", query, exc)
+            self._bump("web-fallback.fail")
             return []
+        self._bump("web-fallback.ok" if served else "web-fallback.empty")
+        return served
 
     def search_albums(
         self,

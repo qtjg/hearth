@@ -124,7 +124,25 @@ def _log_tail_lines(store) -> list[str]:
         return []
 
 
-def gather_report(store, resilience=None) -> str:
+def _fetch_leg_lines(counters) -> list[str]:
+    """Per-leg fetch counters (v0.7.1): which leg served, starved, failed.
+
+    `counters` is the Catalog's flat dict ("search-songs.ok" -> 12, ...).
+    Anything missing, wrong-shaped, or empty degrades to a polite
+    nothing — counters are the last thing allowed to ruin a report.
+    """
+    try:
+        if not isinstance(counters, dict) or not counters:
+            return []
+        lines = ["fetch legs (this session):"]
+        for key in sorted(counters):
+            lines.append(f"  {key}: {counters[key]}")
+        return lines
+    except Exception:  # noqa: BLE001 - bookkeeping must stay invisible
+        return []
+
+
+def gather_report(store, resilience=None, fetch_counters=None) -> str:
     """The full health page as one multi-line string. Never raises."""
     sections: list[list[str]] = []
     try:
@@ -143,6 +161,10 @@ def gather_report(store, resilience=None) -> str:
         sections.append(_resilience_lines(resilience))
     except Exception as exc:  # noqa: BLE001
         sections.append([f"(resilience unavailable: {exc})"])
+    try:
+        sections.append(_fetch_leg_lines(fetch_counters))
+    except Exception as exc:  # noqa: BLE001
+        sections.append([f"(fetch legs unavailable: {exc})"])
     try:
         sections.append(_log_tail_lines(store))
     except Exception as exc:  # noqa: BLE001
